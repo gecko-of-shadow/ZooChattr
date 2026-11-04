@@ -76,7 +76,7 @@ fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
 }
 
 #[tauri::command]
-fn settings_load(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, String> {
+fn settings_load(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, storage::SettingsLoadError> {
     storage::load_settings(&state.data)
 }
 

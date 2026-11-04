@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { chat, HISTORY_FLUSH_MS, ALL_CHANNELS } from "@/lib/chat/controller";
 import { config } from "@/lib/config";
 import { emoteRegistry } from "@/lib/emotes/registry";
+import { settingsLoadFailure } from "@/lib/platform";
 import { newChannelView, useChat } from "@/store/chat";
 import { DEFAULT_SETTINGS } from "@/store/settings";
 import { useUi } from "@/store/ui";
@@ -10,10 +12,20 @@ import type { IrcMessage } from "@/lib/irc/parser";
 
 const memory = new Map<string, string>();
 const tabMemory = new Map<string, string>();
+const SETTINGS_KEY = "zoochattr.settings";
+/** What the next settings read fails with, as settings_load would reject. */
+let settingsReadFailure: { error: unknown } | null = null;
 
 function installStorage(): void {
   vi.stubGlobal("localStorage", {
-    getItem: (key: string) => memory.get(key) ?? null,
+    getItem: (key: string) => {
+      if (key === SETTINGS_KEY && settingsReadFailure) {
+        const { error } = settingsReadFailure;
+        settingsReadFailure = null;
+        throw error;
+      }
+      return memory.get(key) ?? null;
+    },
     setItem: (key: string, value: string) => void memory.set(key, value),
     removeItem: (key: string) => void memory.delete(key),
     clear: () => memory.clear(),
@@ -102,6 +114,45 @@ function resetHistoryBookkeeping(): void {
   internal.historyFlushTimer = null;
 }
 
+type BootInternals = {
+  booted: boolean;
+  settingsUiOnly: boolean;
+  savesBlocked: boolean;
+  saveDirty: boolean;
+  saveErrorShown: boolean;
+  read: { start: () => void; join: (channel: string) => void };
+};
+
+function bootInternals(): BootInternals {
+  return chat as unknown as BootInternals;
+}
+
+function resetBootState(): void {
+  const internal = bootInternals();
+  internal.booted = false;
+  internal.settingsUiOnly = false;
+  internal.savesBlocked = false;
+  internal.saveDirty = false;
+  internal.saveErrorShown = false;
+  settingsReadFailure = null;
+}
+
+/** The real startup, with the network and the browser's window events stubbed out. */
+async function bootMainWindow(): Promise<void> {
+  vi.spyOn(bootInternals().read, "start").mockImplementation(() => undefined);
+  vi.stubGlobal("window", { addEventListener: () => undefined });
+  vi.stubGlobal("document", { hasFocus: () => true, addEventListener: () => undefined, hidden: false });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
+  await chat.boot();
+  await vi.advanceTimersByTimeAsync(0);
+}
+
+/** A settings-changing click: a view button, then whatever is queued to save. */
+async function clickViewButton(): Promise<void> {
+  chat.updateSettings({ gridSlots: 3 });
+  await vi.advanceTimersByTimeAsync(0);
+}
+
 function parseLog(raw: string | undefined): ChatMessage[] {
   if (!raw) return [];
   return raw
@@ -141,12 +192,121 @@ describe("chat controller view and history", () => {
     // A developer's .env may build a history server in; these tests choose their own.
     (config as { builtInHistoryServer: string }).builtInHistoryServer = "";
     resetHistoryBookkeeping();
+    resetBootState();
   });
 
   afterEach(() => {
     resetHistoryBookkeeping();
+    resetBootState();
+    vi.restoreAllMocks();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("settings_load's two kinds of failure both read back with their message", () => {
+    expect(settingsLoadFailure({ message: "moved", keptCopy: "settings.corrupt-1.json" })).toEqual({
+      message: "moved",
+      keptCopy: "settings.corrupt-1.json",
+    });
+    expect(settingsLoadFailure({ message: "locked", keptCopy: null })).toEqual({ message: "locked", keptCopy: null });
+    expect(settingsLoadFailure("plain text")).toEqual({ message: "plain text", keptCopy: null });
+    expect(settingsLoadFailure(new Error("thrown"))).toEqual({ message: "thrown", keptCopy: null });
+  });
+
+  it("never saves defaults over a settings file it couldn't read", async () => {
+    memory.set(SETTINGS_KEY, JSON.stringify({ channels: ["real"], gridChannels: ["real"] }));
+    const before = memory.get(SETTINGS_KEY);
+    settingsReadFailure = { error: { message: "os error 32", keptCopy: null } };
+    const shown = vi.spyOn(toast, "error");
+
+    await bootMainWindow();
+    expect(useChat.getState().settings.channels).toEqual([]);
+    await clickViewButton();
+    await clickViewButton();
+
+    expect(memory.get(SETTINGS_KEY)).toBe(before);
+    expect(shown).toHaveBeenCalledTimes(1);
+    const [title, options] = shown.mock.calls[0];
+    expect(title).toBe("Couldn't read your saved settings");
+    expect(options).toMatchObject({ duration: Number.POSITIVE_INFINITY, closeButton: true });
+    expect(String(options?.description)).toContain("won't save");
+    expect(String(options?.description)).toContain("Restart ZooChattr");
+    expect(String(options?.description)).toContain("os error 32");
+  });
+
+  it("treats a plain-text read failure as a blocked file too", async () => {
+    settingsReadFailure = { error: "Couldn't read settings.json" };
+    await bootMainWindow();
+    await clickViewButton();
+    expect(memory.has(SETTINGS_KEY)).toBe(false);
+  });
+
+  it("starts fresh and keeps saving once the damaged file has been moved aside", async () => {
+    settingsReadFailure = { error: { message: "damaged", keptCopy: "%USERPROFILE%\\settings.corrupt-1.json" } };
+    const shown = vi.spyOn(toast, "error");
+
+    await bootMainWindow();
+    await clickViewButton();
+
+    expect(JSON.parse(memory.get(SETTINGS_KEY) ?? "{}")).toMatchObject({ gridSlots: 3 });
+    const [title, options] = shown.mock.calls[0];
+    expect(title).toBe("Your saved settings were damaged");
+    expect(options).toMatchObject({ duration: Number.POSITIVE_INFINITY, closeButton: true });
+    expect(String(options?.description)).toContain("settings.corrupt-1.json");
+  });
+
+  it("a first run with no settings file saves as usual and shows no error", async () => {
+    const shown = vi.spyOn(toast, "error");
+    await bootMainWindow();
+    await clickViewButton();
+    expect(memory.has(SETTINGS_KEY)).toBe(true);
+    expect(shown).not.toHaveBeenCalled();
+  });
+
+  it("the Settings window never saves after a failed read, even with the file moved aside", async () => {
+    for (const keptCopy of [null, "settings.corrupt-1.json"]) {
+      resetBootState();
+      memory.delete(SETTINGS_KEY);
+      settingsReadFailure = { error: { message: "unreadable", keptCopy } };
+      const shown = vi.spyOn(toast, "error").mockClear();
+
+      await chat.bootSettingsUi();
+      await vi.advanceTimersByTimeAsync(0);
+      await clickViewButton();
+
+      expect(memory.has(SETTINGS_KEY)).toBe(false);
+      expect(shown).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("a later good read lifts the block without writing the defaults out", async () => {
+    settingsReadFailure = { error: { message: "os error 32", keptCopy: null } };
+    await bootMainWindow();
+    await clickViewButton();
+    const dismissed = vi.spyOn(toast, "dismiss").mockImplementation((id) => id ?? 0);
+
+    // The lock has ended and the Settings window saved the real settings.
+    const real = JSON.stringify({ channels: ["real"], gridChannels: ["real"], rememberChatHistory: false });
+    memory.set(SETTINGS_KEY, real);
+    vi.spyOn(bootInternals().read, "join").mockImplementation(() => undefined);
+    await chat.pullSettingsFromDisk();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(useChat.getState().settings.channels).toEqual(["real"]);
+    expect(memory.get(SETTINGS_KEY)).toBe(real);
+    expect(dismissed).toHaveBeenCalled();
+
+    await clickViewButton();
+    expect(JSON.parse(memory.get(SETTINGS_KEY) ?? "{}")).toMatchObject({ channels: ["real"], gridSlots: 3 });
+  });
+
+  it("stays blocked when a later read fails too", async () => {
+    settingsReadFailure = { error: { message: "os error 32", keptCopy: null } };
+    await bootMainWindow();
+    settingsReadFailure = { error: { message: "os error 32", keptCopy: null } };
+    await chat.pullSettingsFromDisk();
+    await clickViewButton();
+    expect(memory.has(SETTINGS_KEY)).toBe(false);
   });
 
   it("counts unread for a focused channel that is not on the grid", async () => {

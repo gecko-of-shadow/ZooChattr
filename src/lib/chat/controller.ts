@@ -86,6 +86,7 @@ type ServerFill = { channel: string; result: FillResult | null } | { channel: st
 const get = useChat.getState;
 const set = useChat.setState;
 const NO_CHATTERS: ActiveUser[] = [];
+const SETTINGS_PROBLEM_TOAST = "settings-problem";
 
 function anonymousNick(): string {
   return `justinfan${Math.floor(10_000 + Math.random() * 89_999)}`;
@@ -127,6 +128,7 @@ class ChatController {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private saving = false;
   private saveDirty = false;
+  private savesBlocked = false;
   private saveErrorShown = false;
   private pendingSends: PendingSend[] = [];
   private sentLog: number[] = [];
@@ -191,13 +193,8 @@ class ChatController {
     if (this.booted) return;
     this.booted = true;
 
-    const [rawSettings, appInfo] = await Promise.all([
-      platform.loadSettings().catch((err) => {
-        toast.error("Couldn't read your saved settings", { description: errorText(err) });
-        return null;
-      }),
-      platform.getAppInfo().catch(() => null),
-    ]);
+    const [saved, appInfo] = await Promise.all([this.readSavedSettings(), platform.getAppInfo().catch(() => null)]);
+    const rawSettings = saved.raw;
     const settings = sanitizeSettings(rawSettings);
     void platform.setCloseToTray(settings.closeToTray).catch(() => undefined);
     void platform.setLaunchAtLogin(settings.startOnLogin).catch(() => undefined);
@@ -209,6 +206,7 @@ class ChatController {
       ready: true,
       settingsLoaded: rawSettings !== null,
     });
+    this.showSettingsProblem(saved.failure);
 
     if (settings.rememberChatHistory) {
       await this.restoreHistory(settings.channels);
@@ -268,12 +266,13 @@ class ChatController {
     this.booted = true;
     this.settingsUiOnly = true;
 
-    const [rawSettings, appInfo, display] = await Promise.all([
-      platform.loadSettings().catch(() => null),
+    const [saved, appInfo, display] = await Promise.all([
+      this.readSavedSettings(),
       platform.getAppInfo().catch(() => null),
       // Login name only — never pull tokens into the Settings webview.
       platform.loadAuthDisplay().catch(() => null),
     ]);
+    const rawSettings = saved.raw;
     const settings = sanitizeSettings(rawSettings);
     emoteRegistry.setPrefs(emotePrefsFrom(settings));
     set({
@@ -287,6 +286,42 @@ class ChatController {
         : { status: "anonymous" },
     });
     this.session = null;
+    this.showSettingsProblem(saved.failure);
+  }
+
+  /**
+   * A window that couldn't read settings.json holds defaults, so saving must stay off until a read
+   * works. The one exception: the main window, once the damaged file is moved aside, has nothing left
+   * to overwrite and can start fresh. The Settings window never can: the main window holds the real settings.
+   */
+  private async readSavedSettings(): Promise<{ raw: unknown | null; failure: platform.SettingsLoadFailure | null }> {
+    try {
+      return { raw: await platform.loadSettings(), failure: null };
+    } catch (err) {
+      const failure = platform.settingsLoadFailure(err);
+      this.savesBlocked = !failure.keptCopy || this.settingsUiOnly;
+      return { raw: null, failure };
+    }
+  }
+
+  /** Stays up until dismissed. Waits a tick so the Settings window's Toaster, which appears with `ready`, can catch it. */
+  private showSettingsProblem(failure: platform.SettingsLoadFailure | null): void {
+    if (!failure) return;
+    const blocked = this.savesBlocked;
+    const options = { id: SETTINGS_PROBLEM_TOAST, duration: Number.POSITIVE_INFINITY, closeButton: true };
+    setTimeout(() => {
+      if (blocked) {
+        toast.error("Couldn't read your saved settings", {
+          ...options,
+          description: `ZooChattr won't save any changes for now, so your saved settings stay safe. Restart ZooChattr to try again. (${failure.message})`,
+        });
+      } else {
+        toast.error("Your saved settings were damaged", {
+          ...options,
+          description: `ZooChattr started fresh with default settings and no channels. The damaged file was kept as ${failure.keptCopy}.`,
+        });
+      }
+    }, 0);
   }
 
   /** Main window: reload preferences (and join any channels Settings added) after the popout saves. */
@@ -294,6 +329,12 @@ class ChatController {
     if (this.settingsUiOnly) return;
     const raw = await platform.loadSettings().catch(() => null);
     if (!raw) return;
+    if (this.savesBlocked) {
+      // A read worked at last. Whatever was waiting to save came from the defaults, so drop it.
+      this.savesBlocked = false;
+      this.saveDirty = false;
+      toast.dismiss(SETTINGS_PROBLEM_TOAST);
+    }
     const next = sanitizeSettings(raw);
     const before = get().settings;
     set({ settings: next });
@@ -1392,7 +1433,7 @@ class ChatController {
 
   /** Saves right away (so closing the window can't lose a change), one write at a time, latest state wins. */
   private async persistSettings(): Promise<void> {
-    if (this.saving) return;
+    if (this.saving || this.savesBlocked) return;
     this.saving = true;
     try {
       while (this.saveDirty) {

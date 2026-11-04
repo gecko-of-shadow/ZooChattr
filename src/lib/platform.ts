@@ -41,6 +41,20 @@ export async function loadSettings(): Promise<unknown | null> {
   }
 }
 
+/** Why settings_load failed. `keptCopy` names the moved-aside file; null means settings.json is still there, unread. */
+export interface SettingsLoadFailure {
+  message: string;
+  keptCopy: string | null;
+}
+
+export function settingsLoadFailure(err: unknown): SettingsLoadFailure {
+  if (err && typeof err === "object" && "message" in err) {
+    const { message, keptCopy } = err as { message: unknown; keptCopy?: unknown };
+    return { message: String(message), keptCopy: typeof keptCopy === "string" && keptCopy ? keptCopy : null };
+  }
+  return { message: String(err), keptCopy: null };
+}
+
 export async function saveSettings(settings: unknown): Promise<void> {
   if (isTauri) return invoke("settings_save", { settings });
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
