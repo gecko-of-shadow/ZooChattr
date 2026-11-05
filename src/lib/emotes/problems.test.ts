@@ -36,3 +36,18 @@ describe("problemLog", () => {
     expect(problemLog.size).toBe(5);
   });
 });
+
+describe("a damaged saved list", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("can't give Settings a time it can't format", async () => {
+    const saved = JSON.stringify([{ id: "p", at: 1e18, provider: "7tv", scope: "global", message: "x" }]);
+    vi.stubGlobal("localStorage", { getItem: () => saved, setItem: () => undefined, removeItem: () => undefined });
+    vi.resetModules();
+    const { problemLog: fresh } = await import("./problems");
+    expect(() => new Date(fresh.list()[0].at).toISOString()).not.toThrow();
+  });
+});

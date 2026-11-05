@@ -57,7 +57,7 @@ export function sanitizeHistory(raw: unknown, now = Date.now()): ChatMessage[] {
     const text = cleanString(m.text, 2_000);
     const kind = KINDS.includes(m.kind as MessageKind) ? (m.kind as MessageKind) : null;
     // Skipped, not given today's date: nothing rewrites the file, so that line would come back at the bottom at every start.
-    const ts = isUsableTime(m.ts, now) ? m.ts : null;
+    const ts = isUsableTime(m.ts) ? m.ts : null;
     if (!id || !channel || text === undefined || !kind || ts === null) continue;
     if (id.startsWith(HISTORY_BOUNDARY_PREFIX)) continue;
     if (m.pending) continue;

@@ -132,12 +132,12 @@ describe("chat history (48h)", () => {
 describe("saved lines with an impossible time", () => {
   const now = 1_700_000_000_000;
 
-  it.each([1e18, 8_640_000_000_000_001, now + 3 * 24 * 60 * 60_000, -1, 0])("skips a line stamped %d and keeps the rest", (ts) => {
+  it.each([1e18, 8_640_000_000_000_001, Date.UTC(2100, 0, 2), -1, 0])("skips a line stamped %d and keeps the rest", (ts) => {
     const kept = sanitizeHistory([base({ id: "good", ts: now - 1_000 }), base({ id: "bad", ts })], now);
     expect(kept.map((m) => m.id)).toEqual(["good"]);
   });
 
-  it("keeps a line a little ahead of this computer's clock", () => {
-    expect(sanitizeHistory([base({ id: "ahead", ts: now + 60_000 })], now).map((m) => m.id)).toEqual(["ahead"]);
+  it("keeps a real line when this computer's clock runs days slow", () => {
+    expect(sanitizeHistory([base({ id: "ahead", ts: now + 3 * 24 * 60 * 60_000 })], now).map((m) => m.id)).toEqual(["ahead"]);
   });
 });
