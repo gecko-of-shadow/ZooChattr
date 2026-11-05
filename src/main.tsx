@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { SettingsApp } from "./components/dialogs/SettingsApp";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { isTauri } from "./lib/platform";
 import "./index.css";
 
@@ -47,6 +48,8 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <Root />
+    <ErrorBoundary message="ZooChattr hit a problem and couldn't draw this window." onRetry={() => window.location.reload()} retryLabel="Reload">
+      <Root />
+    </ErrorBoundary>
   </React.StrictMode>,
 );

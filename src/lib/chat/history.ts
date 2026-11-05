@@ -1,4 +1,5 @@
 import type { ChatMessage, MessageKind, NoticeTone } from "@/lib/twitch/types";
+import { isUsableTime } from "./messageTime";
 
 /** Keep messages from the last two days. */
 export const HISTORY_TTL_MS = 48 * 60 * 60_000;
@@ -55,7 +56,8 @@ export function sanitizeHistory(raw: unknown, now = Date.now()): ChatMessage[] {
     const channel = cleanString(m.channel, 64);
     const text = cleanString(m.text, 2_000);
     const kind = KINDS.includes(m.kind as MessageKind) ? (m.kind as MessageKind) : null;
-    const ts = typeof m.ts === "number" && Number.isFinite(m.ts) ? m.ts : null;
+    // Skipped, not given today's date: nothing rewrites the file, so that line would come back at the bottom at every start.
+    const ts = isUsableTime(m.ts) ? m.ts : null;
     if (!id || !channel || text === undefined || !kind || ts === null) continue;
     if (id.startsWith(HISTORY_BOUNDARY_PREFIX)) continue;
     if (m.pending) continue;

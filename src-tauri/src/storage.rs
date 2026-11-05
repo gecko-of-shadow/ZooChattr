@@ -71,33 +71,69 @@ pub fn display_path(path: &Path) -> String {
     path.display().to_string()
 }
 
-pub fn load_settings(data: &DataDir) -> Result<Option<serde_json::Value>, String> {
+/// Why settings couldn't be loaded. The front end reads both fields.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsLoadError {
+    pub message: String,
+    /// Where the damaged file went. `None` means settings.json is still in place, unread,
+    /// so nothing may be saved over it.
+    pub kept_copy: Option<String>,
+}
+
+/// Moves a damaged settings file to a name no earlier copy uses. A rename on Windows
+/// would replace whatever is already at the destination.
+fn set_aside_settings(folder: &Path, file: &Path) -> std::io::Result<PathBuf> {
+    let stamp = now_ms() / 1000;
+    let mut copy = folder.join(format!("settings.corrupt-{stamp}.json"));
+    let mut attempt = 1;
+    while copy.exists() {
+        copy = folder.join(format!("settings.corrupt-{stamp}-{attempt}.json"));
+        attempt += 1;
+    }
+    fs::rename(file, &copy)?;
+    Ok(copy)
+}
+
+/// `Ok(None)` is only a real first run: no file at all. Anything else that can't be used as
+/// settings is an error, so the app can't mistake a damaged file for a fresh start.
+/// The app has always written a `channels` list, so a file without one isn't ours to overwrite.
+pub fn load_settings(data: &DataDir) -> Result<Option<serde_json::Value>, SettingsLoadError> {
     let file = data.path.join(SETTINGS_FILE);
-    let text = match fs::read_to_string(&file) {
-        Ok(text) => text,
+    let unread = |detail: String| SettingsLoadError {
+        message: format!("Couldn't read {}: {detail}", display_path(&file)),
+        kept_copy: None,
+    };
+    let bytes = match fs::read(&file) {
+        Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(format!("Couldn't read {}: {err}", display_path(&file))),
+        Err(err) => return Err(unread(err.to_string())),
     };
 
-    match serde_json::from_str(&text) {
-        Ok(value) => Ok(Some(value)),
-        Err(_) => {
-            // Keep the unreadable file around for inspection instead of silently overwriting it.
-            let stamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or_default();
-            let _ = fs::rename(&file, data.path.join(format!("settings.corrupt-{stamp}.json")));
-            Ok(None)
-        }
-    }
+    let problem = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(value) if value.get("channels").is_some_and(serde_json::Value::is_array) => return Ok(Some(value)),
+        Ok(_) => "it doesn't hold settings".to_string(),
+        Err(err) => err.to_string(),
+    };
+    let copy = set_aside_settings(&data.path, &file)
+        .map_err(|err| unread(format!("{problem}, and it couldn't be moved aside: {err}")))?;
+    Err(SettingsLoadError {
+        kept_copy: Some(display_path(&copy)),
+        ..unread(problem)
+    })
 }
 
 pub fn save_settings(data: &DataDir, value: &serde_json::Value) -> Result<(), String> {
     let file = data.path.join(SETTINGS_FILE);
     let tmp = data.path.join(format!("{SETTINGS_FILE}.tmp"));
     let text = serde_json::to_string_pretty(value).map_err(|err| err.to_string())?;
-    fs::write(&tmp, text).map_err(|err| format!("Couldn't write {}: {err}", display_path(&tmp)))?;
+    // On disk before the rename, so a power cut can't leave an empty settings.json.
+    let write_tmp = || -> std::io::Result<()> {
+        let mut out = fs::File::create(&tmp)?;
+        out.write_all(text.as_bytes())?;
+        out.sync_all()
+    };
+    write_tmp().map_err(|err| format!("Couldn't write {}: {err}", display_path(&tmp)))?;
     fs::rename(&tmp, &file).map_err(|err| format!("Couldn't save {}: {err}", display_path(&file)))
 }
 
@@ -388,16 +424,161 @@ mod tests {
         assert_eq!(display_path(Path::new("/opt/elsewhere")), Path::new("/opt/elsewhere").display().to_string());
     }
 
-    #[test]
-    fn corrupt_settings_are_set_aside() {
-        let data = temp_data_dir("corrupt");
-        fs::write(data.path.join(SETTINGS_FILE), "{ not json").unwrap();
-        assert!(load_settings(&data).unwrap().is_none());
-        let kept = fs::read_dir(&data.path)
+    /// Every `settings.corrupt-*` file in the folder, oldest name first.
+    fn kept_copies(data: &DataDir) -> Vec<PathBuf> {
+        let mut copies: Vec<PathBuf> = fs::read_dir(&data.path)
             .unwrap()
             .filter_map(Result::ok)
-            .any(|entry| entry.file_name().to_string_lossy().starts_with("settings.corrupt-"));
-        assert!(kept, "corrupt settings file should be renamed, not deleted");
+            .map(|entry| entry.path())
+            .filter(|path| path.file_name().unwrap().to_string_lossy().starts_with("settings.corrupt-"))
+            .collect();
+        copies.sort();
+        copies
+    }
+
+    /// A damaged file must be moved aside with every byte intact, the failure reported,
+    /// and a save afterwards must leave that copy alone.
+    fn assert_set_aside(name: &str, bytes: &[u8]) {
+        let data = temp_data_dir(name);
+        let file = data.path.join(SETTINGS_FILE);
+        fs::write(&file, bytes).unwrap();
+
+        let err = load_settings(&data).expect_err("a damaged file must not look like a first run");
+        assert!(err.kept_copy.is_some(), "{name}: the failure should name the copy");
+        assert!(!file.exists(), "{name}: nothing should be left to overwrite");
+        let copies = kept_copies(&data);
+        assert_eq!(copies.len(), 1, "{name}");
+        assert_eq!(fs::read(&copies[0]).unwrap(), bytes, "{name}: the copy must match the damaged file");
+
+        // The next start is a clean first run, and saving doesn't touch the copy.
+        assert!(load_settings(&data).unwrap().is_none(), "{name}");
+        save_settings(&data, &serde_json::json!({ "channels": [] })).unwrap();
+        assert_eq!(fs::read(&copies[0]).unwrap(), bytes, "{name}: a save must leave the copy alone");
+    }
+
+    #[test]
+    fn corrupt_settings_are_set_aside() {
+        assert_set_aside("corrupt", b"{ not json");
+    }
+
+    #[test]
+    fn half_written_settings_are_set_aside() {
+        assert_set_aside("half-written", br#"{"channels":["xqc","shr"#);
+    }
+
+    #[test]
+    fn empty_settings_file_is_set_aside() {
+        assert_set_aside("empty", b"");
+    }
+
+    #[test]
+    fn settings_that_are_not_utf8_are_set_aside() {
+        assert_set_aside("bad-byte", b"{\"channels\":[\"caf\xE9\"]}");
+        // The report's trigger: Notepad's "Unicode" encoding.
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in r#"{"channels":["xqc"]}"#.encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_set_aside("utf16", &utf16);
+    }
+
+    #[test]
+    fn json_that_is_not_a_settings_object_is_set_aside() {
+        assert_set_aside("json-null", b"null");
+        assert_set_aside("json-list", b"[]");
+        assert_set_aside("json-empty-object", b"{}");
+        assert_set_aside("json-bad-channels", br#"{"channels":"xqc"}"#);
+        // A backup copied over settings.json by hand: the channels are one level down.
+        assert_set_aside("json-backup", br#"{"zoochattr":1,"settings":{"channels":["xqc"]}}"#);
+    }
+
+    #[test]
+    fn a_second_damaged_file_keeps_the_first_copy() {
+        let data = temp_data_dir("two-copies");
+        let file = data.path.join(SETTINGS_FILE);
+        fs::write(&file, b"first").unwrap();
+        load_settings(&data).unwrap_err();
+        fs::write(&file, b"second").unwrap();
+        load_settings(&data).unwrap_err();
+        let mut kept: Vec<Vec<u8>> = kept_copies(&data).iter().map(|path| fs::read(path).unwrap()).collect();
+        kept.sort();
+        assert_eq!(kept, vec![b"first".to_vec(), b"second".to_vec()]);
+    }
+
+    #[test]
+    fn a_healthy_file_is_left_where_it_is() {
+        let data = temp_data_dir("healthy");
+        fs::write(data.path.join(SETTINGS_FILE), r#"{"channels":["xqc"]}"#).unwrap();
+        assert!(load_settings(&data).unwrap().is_some());
+        assert!(data.path.join(SETTINGS_FILE).exists());
+        assert!(kept_copies(&data).is_empty());
+    }
+
+    #[test]
+    fn save_leaves_no_temp_file() {
+        let data = temp_data_dir("no-temp");
+        save_settings(&data, &serde_json::json!({ "channels": ["xqc"] })).unwrap();
+        save_settings(&data, &serde_json::json!({ "channels": ["shroud"] })).unwrap();
+        assert!(!data.path.join("settings.json.tmp").exists());
+        assert_eq!(load_settings(&data).unwrap().unwrap()["channels"][0], "shroud");
+    }
+
+    /// Opens a file the way another program can: nobody else may read, write or move it.
+    #[cfg(windows)]
+    fn lock_exclusively(path: &Path) -> fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        OpenOptions::new().read(true).share_mode(0).open(path).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn locked_settings_stay_in_place_and_report_no_copy() {
+        let data = temp_data_dir("locked");
+        let file = data.path.join(SETTINGS_FILE);
+        let good = br#"{"channels":["xqc"]}"#;
+        fs::write(&file, good).unwrap();
+
+        let lock = lock_exclusively(&file);
+        let err = load_settings(&data).expect_err("a locked file is not a first run");
+        assert_eq!(err.kept_copy, None, "the file was not moved, so saving must stay blocked");
+        drop(lock);
+
+        assert_eq!(fs::read(&file).unwrap(), good);
+        assert!(kept_copies(&data).is_empty());
+        assert!(load_settings(&data).unwrap().is_some(), "the file loads once the lock ends");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn damaged_file_that_cannot_be_moved_reports_no_copy() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let data = temp_data_dir("stuck");
+        let file = data.path.join(SETTINGS_FILE);
+        fs::write(&file, b"{ not json").unwrap();
+
+        // Readable by others, but it can't be moved while this handle is open.
+        let held = OpenOptions::new().read(true).share_mode(1).open(&file).unwrap();
+        let err = load_settings(&data).expect_err("damaged");
+        assert_eq!(err.kept_copy, None, "nothing was moved, so saving must stay blocked");
+        drop(held);
+
+        assert_eq!(fs::read(&file).unwrap(), b"{ not json");
+        assert!(kept_copies(&data).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_failed_save_leaves_the_old_file_whole() {
+        let data = temp_data_dir("failed-save");
+        let file = data.path.join(SETTINGS_FILE);
+        let good = br#"{"channels":["xqc"]}"#;
+        fs::write(&file, good).unwrap();
+
+        let lock = lock_exclusively(&file);
+        save_settings(&data, &serde_json::json!({ "channels": [] })).expect_err("the file is locked");
+        drop(lock);
+
+        assert_eq!(fs::read(&file).unwrap(), good);
     }
 
     #[test]

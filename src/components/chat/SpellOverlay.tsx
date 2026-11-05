@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { SpellSpan } from "@/lib/spell/misspellings";
 
 interface MirrorStyle {
@@ -108,6 +108,7 @@ export function SpellMenu({
   onPick,
   onAdd,
   onIgnore,
+  onClose,
 }: {
   x: number;
   y: number;
@@ -115,12 +116,40 @@ export function SpellMenu({
   onPick: (word: string) => void;
   onAdd: () => void;
   onIgnore: () => void;
+  onClose: () => void;
 }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onPress = (event: PointerEvent) => {
+      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return;
+      onClose();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // Comes first, wherever focus is, so the same Esc doesn't also leave the single view or close Settings.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onClose();
+    };
+    window.addEventListener("pointerdown", onPress, true);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("blur", onClose);
+    return () => {
+      window.removeEventListener("pointerdown", onPress, true);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
   const left = Math.max(8, Math.min(x, window.innerWidth - 220));
   const top = Math.max(8, Math.min(y, window.innerHeight - 240));
   return (
     <div
+      ref={menuRef}
       role="menu"
+      // Pressing a gap between the items must not take focus from the message box.
+      onMouseDown={(event) => event.preventDefault()}
       data-testid="spell-menu"
       className="fixed z-50 min-w-44 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
       style={{ left, top }}

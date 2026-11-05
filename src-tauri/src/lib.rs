@@ -80,7 +80,9 @@ fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
 }
 
 #[tauri::command]
-fn settings_load(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, String> {
+fn settings_load(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, storage::SettingsLoadError> {
+    // A load can move the file aside, so it must never overlap a save.
+    let _guard = state.save_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     storage::load_settings(&state.data)
 }
 
@@ -500,6 +502,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            update::forget_old_exe_later();
             let data = storage::resolve_data_dir(app.handle());
             let saved_geom = storage::load_window_geom(&data);
             let webview_dir = data.portable.then(|| data.path.join("webview"));
