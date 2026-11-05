@@ -286,10 +286,13 @@ fn apply_update_to(current_exe: &Path, download_url: &str) -> Result<(), String>
 fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, place_tries: u32) -> String {
     let bak = current_exe.with_extension("exe.bak");
     // Wait for this process to exit, swap the exe, restart, clean up. ZooChattr-data is never touched.
-    // The old exe is only moved aside, never deleted, until the new one has been started.
-    // - A running exe CAN be renamed, so the wait opens it for append instead, which fails until it has closed.
-    //   The `if not exist` comes first because `>>` would create a missing file.
-    // - `start` stops on a Windows error box for a file that isn't there, hence the check before the last one.
+    // - The backup is a copy, and `move /y` replaces the exe in one step, so ZooChattr.exe is never missing, even if
+    //   this script is killed partway. If the move can't happen, the old exe simply stays where it is.
+    // - The backup goes only once the new exe is still running a few seconds after it started. `start` alone can't
+    //   prove that: a build that starts and then dies right away looks fine to it.
+    // - "Is it running" is an open for append, which fails while an exe runs. Renaming wouldn't tell: a running exe
+    //   CAN be renamed. The `if not exist` comes first because `>>` would create a missing file.
+    // - `start` stops on a Windows error box for a file that isn't there, hence the checks before it.
     // - Started with `start`, cmd runs this with /K and would stay open, hence the `exit`. It shares a line with
     //   the `del` because cmd can't read another line from a file it has just deleted.
     // Cmd expands %VAR% even inside quotes. A folder named "100%" would miss the real exe.
@@ -307,20 +310,24 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
          :swap\r\n\
          if not exist \"{new}\" goto restart\r\n\
          if not exist \"{current}\" goto place\r\n\
-         del /f /q \"{bak}\" 2>nul\r\n\
-         move /y \"{current}\" \"{bak}\" >nul 2>nul\r\n\
-         if errorlevel 1 goto restart\r\n\
+         copy /b /y \"{current}\" \"{bak}\" >nul 2>nul\r\n\
+         if errorlevel 1 goto keep_old\r\n\
          :place\r\n\
          set tries=0\r\n\
          :place_again\r\n\
          move /y \"{new}\" \"{current}\" >nul 2>nul\r\n\
          if not errorlevel 1 goto placed\r\n\
          set /a tries+=1\r\n\
-         if %tries% geq {place_tries} goto rollback\r\n\
+         if %tries% geq {place_tries} goto keep_old\r\n\
          timeout /t 1 /nobreak >nul\r\n\
          goto place_again\r\n\
          :placed\r\n\
+         if not exist \"{current}\" goto rollback\r\n\
          start \"\" \"{current}\"\r\n\
+         if errorlevel 1 goto rollback\r\n\
+         timeout /t 3 /nobreak >nul\r\n\
+         if not exist \"{current}\" goto rollback\r\n\
+         2>nul (>>\"{current}\" (call )) && goto rollback\r\n\
          del /f /q \"{bak}\" 2>nul\r\n\
          goto finish\r\n\
          :rollback\r\n\
@@ -330,9 +337,14 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
          move /y \"{bak}\" \"{current}\" >nul 2>nul\r\n\
          if not errorlevel 1 goto restart\r\n\
          set /a tries+=1\r\n\
-         if %tries% geq {place_tries} goto restart\r\n\
+         if %tries% geq {place_tries} goto rollback_copy\r\n\
          timeout /t 1 /nobreak >nul\r\n\
          goto rollback_again\r\n\
+         :rollback_copy\r\n\
+         copy /b /y \"{bak}\" \"{current}\" >nul 2>nul\r\n\
+         goto restart\r\n\
+         :keep_old\r\n\
+         del /f /q \"{bak}\" 2>nul\r\n\
          :restart\r\n\
          if not exist \"{current}\" goto finish\r\n\
          del /f /q \"{new}\" 2>nul\r\n\
@@ -510,9 +522,12 @@ mod swap_tests {
             let image = format!("zcfake{pid}{case}.exe");
             let current = dir.join(&image);
             let new = dir.join(format!("{image}.new"));
-            // cmd stays open when started with nothing to do, so a restart can be seen. hostname just exits.
+            // cmd stays open when started with nothing to do, so a start can be seen. Bytes after the end of an exe
+            // don't stop it running, so the new one runs the same way but is a different file.
             fs::copy(Path::new(SYSTEM).join("cmd.exe"), &current).unwrap();
-            fs::copy(Path::new(SYSTEM).join("HOSTNAME.EXE"), &new).unwrap();
+            let mut new_build = fs::read(&current).unwrap();
+            new_build.extend_from_slice(b"new build");
+            fs::write(&new, new_build).unwrap();
             Rig {
                 bak: current.with_extension("exe.bak"),
                 helper: dir.join("zoochattr-update.cmd"),
@@ -568,6 +583,12 @@ mod swap_tests {
             assert!(fs::read(&self.current).unwrap() == self.new_bytes, "the new exe must be in place");
             assert!(!self.bak.exists(), "the old exe goes only after success");
             assert!(!self.new.exists(), "the .new file was moved");
+            assert!(self.app_running(), "the new app should be running");
+        }
+
+        fn make_new_exit_at_once(&mut self) {
+            fs::copy(Path::new(SYSTEM).join("HOSTNAME.EXE"), &self.new).unwrap();
+            self.new_bytes = fs::read(&self.new).unwrap();
         }
     }
 
@@ -647,9 +668,57 @@ mod swap_tests {
         let hold = fs::OpenOptions::new().read(true).share_mode(0).open(&rig.new).unwrap();
         rig.start_helper(10, 10);
         sleep(Duration::from_millis(2500));
+        // Retrying: the app must still be there the whole time, in case something stops the helper now.
+        assert!(fs::read(&rig.current).unwrap() == rig.old_bytes);
         drop(hold);
         rig.wait_for_helper(20);
         rig.assert_swapped();
+    }
+
+    #[test]
+    fn a_new_exe_that_dies_at_once_puts_the_old_one_back() {
+        let mut rig = Rig::new("dies");
+        rig.make_new_exit_at_once();
+        rig.start_helper(10, 3);
+        rig.wait_for_helper(20);
+        rig.assert_old_kept();
+        assert!(rig.app_running(), "the old app should be restarted");
+    }
+
+    #[test]
+    fn a_new_exe_windows_refuses_to_run_puts_the_old_one_back() {
+        let rig = Rig::new("denied");
+        // S-1-1-0 is Everyone, under any Windows language.
+        let deny = Command::new("icacls").args([rig.new.as_os_str(), "/deny".as_ref(), "*S-1-1-0:(X)".as_ref()]).output().unwrap();
+        assert!(deny.status.success());
+        rig.start_helper(10, 3);
+        rig.wait_for_helper(20);
+        rig.assert_old_kept();
+        assert!(rig.app_running(), "the old app should be restarted");
+    }
+
+    #[test]
+    fn a_locked_backup_is_still_copied_back() {
+        let mut rig = Rig::new("lockedbak");
+        rig.make_new_exit_at_once();
+        let bak = rig.bak.clone();
+        // Grabs the backup as soon as it appears, the way a scanner would: reading, no delete sharing.
+        let holder = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < deadline {
+                if let Ok(file) = fs::OpenOptions::new().read(true).share_mode(1 | 2).open(&bak) {
+                    sleep(Duration::from_secs(12));
+                    drop(file);
+                    return;
+                }
+                sleep(Duration::from_millis(5));
+            }
+        });
+        rig.start_helper(10, 2);
+        rig.wait_for_helper(20);
+        assert!(fs::read(&rig.current).unwrap() == rig.old_bytes, "the old exe must be back");
+        assert!(rig.app_running(), "the old app should be restarted");
+        holder.join().unwrap();
     }
 
     #[test]
@@ -673,7 +742,8 @@ mod swap_tests {
     }
 
     #[test]
-    fn odd_folder_names_work() {
+    // Folders with & or ^, or with ( ) ; and no space, don't get this far: the helper never starts (see the report).
+    fn percent_signs_spaces_and_brackets_in_the_folder_work() {
         let rig = Rig::in_folder("odd", "100% zoo (test)");
         rig.start_helper(10, 3);
         rig.wait_for_helper(20);
