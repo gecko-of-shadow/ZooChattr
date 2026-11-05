@@ -188,6 +188,22 @@ pub fn check_for_update() -> Result<Option<UpdateInfo>, String> {
     }))
 }
 
+/// The update helper leaves the old exe beside the new one as a way back. Running this long proves the new one works.
+const OLD_EXE_KEPT_FOR: Duration = Duration::from_secs(30);
+
+fn remove_old_exe(exe: &Path) {
+    let _ = fs::remove_file(exe.with_extension("exe.bak"));
+}
+
+/// Called at every start. A build that dies before this runs out keeps the old exe beside it.
+pub fn forget_old_exe_later() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    std::thread::spawn(move || {
+        std::thread::sleep(OLD_EXE_KEPT_FOR);
+        remove_old_exe(&exe);
+    });
+}
+
 fn exe_dir() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|err| format!("Couldn't find this program: {err}"))?;
     exe.parent()
@@ -288,8 +304,9 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
     // Wait for this process to exit, swap the exe, restart, clean up. ZooChattr-data is never touched.
     // - The backup is a copy, and `move /y` replaces the exe in one step, so ZooChattr.exe is never missing, even if
     //   this script is killed partway. If the move can't happen, the old exe simply stays where it is.
-    // - The backup goes only once the new exe is still running a few seconds after it started. `start` alone can't
-    //   prove that: a build that starts and then dies right away looks fine to it.
+    // - This script never deletes a good backup. The new app does that itself once it has run for a while, because
+    //   only that proves it works (see forget_old_exe_later). A build that fails to start or dies at once is
+    //   swapped back here. Rollback copies through a temp name, because a failed `copy` deletes its destination.
     // - "Is it running" is an open for append, which fails while an exe runs. Renaming wouldn't tell: a running exe
     //   CAN be renamed. The `if not exist` comes first because `>>` would create a missing file.
     // - `start` stops on a Windows error box for a file that isn't there, hence the checks before it.
@@ -299,9 +316,10 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
     format!(
         "@echo off\r\n\
          setlocal\r\n\
+         set \"timeout=%SystemRoot%\\System32\\timeout.exe\"\r\n\
          set tries=0\r\n\
          :wait\r\n\
-         timeout /t 1 /nobreak >nul\r\n\
+         \"%timeout%\" /t 1 /nobreak >nul\r\n\
          if not exist \"{current}\" goto swap\r\n\
          2>nul (>>\"{current}\" (call )) && goto swap\r\n\
          set /a tries+=1\r\n\
@@ -310,6 +328,7 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
          :swap\r\n\
          if not exist \"{new}\" goto restart\r\n\
          if not exist \"{current}\" goto place\r\n\
+         del /f /q \"{bak}\" 2>nul\r\n\
          copy /b /y \"{current}\" \"{bak}\" >nul 2>nul\r\n\
          if errorlevel 1 goto keep_old\r\n\
          :place\r\n\
@@ -319,16 +338,15 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
          if not errorlevel 1 goto placed\r\n\
          set /a tries+=1\r\n\
          if %tries% geq {place_tries} goto keep_old\r\n\
-         timeout /t 1 /nobreak >nul\r\n\
+         \"%timeout%\" /t 1 /nobreak >nul\r\n\
          goto place_again\r\n\
          :placed\r\n\
          if not exist \"{current}\" goto rollback\r\n\
          start \"\" \"{current}\"\r\n\
          if errorlevel 1 goto rollback\r\n\
-         timeout /t 3 /nobreak >nul\r\n\
+         \"%timeout%\" /t 3 /nobreak >nul\r\n\
          if not exist \"{current}\" goto rollback\r\n\
          2>nul (>>\"{current}\" (call )) && goto rollback\r\n\
-         del /f /q \"{bak}\" 2>nul\r\n\
          goto finish\r\n\
          :rollback\r\n\
          set tries=0\r\n\
@@ -338,10 +356,13 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
          if not errorlevel 1 goto restart\r\n\
          set /a tries+=1\r\n\
          if %tries% geq {place_tries} goto rollback_copy\r\n\
-         timeout /t 1 /nobreak >nul\r\n\
+         \"%timeout%\" /t 1 /nobreak >nul\r\n\
          goto rollback_again\r\n\
          :rollback_copy\r\n\
-         copy /b /y \"{bak}\" \"{current}\" >nul 2>nul\r\n\
+         copy /b /y \"{bak}\" \"{bak}.tmp\" >nul 2>nul\r\n\
+         if errorlevel 1 goto restart\r\n\
+         move /y \"{bak}.tmp\" \"{current}\" >nul 2>nul\r\n\
+         if errorlevel 1 del /f /q \"{bak}.tmp\" 2>nul\r\n\
          goto restart\r\n\
          :keep_old\r\n\
          del /f /q \"{bak}\" 2>nul\r\n\
@@ -581,7 +602,7 @@ mod swap_tests {
 
         fn assert_swapped(&self) {
             assert!(fs::read(&self.current).unwrap() == self.new_bytes, "the new exe must be in place");
-            assert!(!self.bak.exists(), "the old exe goes only after success");
+            assert!(fs::read(&self.bak).unwrap() == self.old_bytes, "the old exe stays until the new app removes it");
             assert!(!self.new.exists(), "the .new file was moved");
             assert!(self.app_running(), "the new app should be running");
         }
@@ -603,8 +624,13 @@ mod swap_tests {
                 );
                 let _ = Command::new("powershell").args(["-NoProfile", "-Command", &stop]).output();
             }
-            sleep(Duration::from_millis(200));
-            let _ = fs::remove_dir_all(&self.dir);
+            // A killed fake lets go of its file a moment later.
+            for _ in 0..25 {
+                sleep(Duration::from_millis(200));
+                if fs::remove_dir_all(&self.dir).is_ok() || !self.dir.exists() {
+                    break;
+                }
+            }
         }
     }
 
@@ -722,6 +748,29 @@ mod swap_tests {
     }
 
     #[test]
+    fn a_backup_that_cant_be_read_leaves_both_files() {
+        let mut rig = Rig::new("nobak");
+        rig.make_new_exit_at_once();
+        let bak = rig.bak.clone();
+        let holder = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < deadline {
+                if let Ok(file) = fs::OpenOptions::new().read(true).share_mode(0).open(&bak) {
+                    sleep(Duration::from_secs(10));
+                    drop(file);
+                    return;
+                }
+                sleep(Duration::from_millis(5));
+            }
+        });
+        rig.start_helper(10, 2);
+        rig.wait_for_helper(20);
+        holder.join().unwrap();
+        assert!(fs::read(&rig.current).unwrap() == rig.new_bytes, "nothing could be put back, and nothing was lost");
+        assert!(fs::read(&rig.bak).unwrap() == rig.old_bytes);
+    }
+
+    #[test]
     fn a_stuck_old_exe_is_left_alone() {
         let rig = Rig::new("nomove");
         // Open for writing is allowed, so the "has it closed" check passes, but it can't be renamed.
@@ -736,9 +785,23 @@ mod swap_tests {
     fn an_old_bak_from_before_does_not_get_in_the_way() {
         let rig = Rig::new("stale");
         fs::write(&rig.bak, b"left over").unwrap();
+        let mut read_only = fs::metadata(&rig.bak).unwrap().permissions();
+        read_only.set_readonly(true);
+        fs::set_permissions(&rig.bak, read_only).unwrap();
         rig.start_helper(10, 3);
         rig.wait_for_helper(20);
         rig.assert_swapped();
+    }
+
+    #[test]
+    fn the_new_app_removes_only_the_backup() {
+        let rig = Rig::new("forget");
+        fs::write(&rig.bak, b"old").unwrap();
+        remove_old_exe(&rig.current);
+        assert!(!rig.bak.exists());
+        assert!(rig.current.exists());
+        assert!(rig.new.exists());
+        remove_old_exe(&rig.current);
     }
 
     #[test]

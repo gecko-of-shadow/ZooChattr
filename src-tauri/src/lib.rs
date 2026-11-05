@@ -475,6 +475,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            update::forget_old_exe_later();
             let data = storage::resolve_data_dir(app.handle());
             let saved_geom = storage::load_window_geom(&data);
             let webview_dir = data.portable.then(|| data.path.join("webview"));
