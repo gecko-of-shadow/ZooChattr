@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { CircleAlert, Clock, CornerDownRight, Lock, SendHorizontal, Smile, Users, X } from "lucide-react";
 import { Mascot } from "@/components/mascots/Mascot";
@@ -9,7 +9,15 @@ import { reduceComposerKey } from "@/lib/chat/composerKeys";
 import { chat } from "@/lib/chat/controller";
 import { findEmotes, wordAt } from "@/lib/emotes/search";
 import { loadSpellEngine, type SpellLanguageId } from "@/lib/spell/engine";
-import { findMisspellings, indexAtWidth, rankSuggestions, replaceSpellWord, type SpellSpan } from "@/lib/spell/misspellings";
+import {
+  findMisspellings,
+  indexAtWidth,
+  rankSuggestions,
+  replaceSpellWord,
+  spellMenuIsCurrent,
+  type SpellMenuTarget,
+  type SpellSpan,
+} from "@/lib/spell/misspellings";
 import { ignoreSpellWord, ignoredSpellWords, subscribeSpellIgnore } from "@/lib/spell/session";
 import { emoteKey, emoteUrls, type Emote } from "@/lib/emotes/types";
 import { useTheme } from "@/lib/useTheme";
@@ -93,6 +101,12 @@ export function LoginPrompt() {
 }
 
 /** A Tab-completion in progress: which word is being finished and which match is in the box right now. */
+interface SpellMenuState extends SpellMenuTarget {
+  x: number;
+  y: number;
+  suggestions: string[];
+}
+
 interface Completion {
   matches: TabMatch[];
   index: number;
@@ -238,7 +252,7 @@ export function Composer({ channel, compact = false }: { channel: string | null;
   const [error, setError] = useState<string | null>(null);
   const [completion, setCompletion] = useState<Completion | null>(null);
   const [misspellings, setMisspellings] = useState<SpellSpan[]>([]);
-  const [spellMenu, setSpellMenu] = useState<{ x: number; y: number; span: SpellSpan; suggestions: string[] } | null>(null);
+  const [spellMenu, setSpellMenu] = useState<SpellMenuState | null>(null);
   const [ignoreVersion, setIgnoreVersion] = useState(0);
   const history = useRef<string[]>(channel ? (sharedHistories.get(channel) ?? []).slice() : []);
   const historyIndex = useRef(-1);
@@ -256,6 +270,13 @@ export function Composer({ channel, compact = false }: { channel: string | null;
   const spellLanguageId: SpellLanguageId = spellLanguage === "en-US" ? "en-US" : "en-US";
 
   useEffect(() => subscribeSpellIgnore(() => setIgnoreVersion((version) => version + 1)), []);
+
+  // A menu belongs to one draft: anything that changes the text, the channel or the login ends it.
+  useEffect(() => {
+    setSpellMenu(null);
+  }, [text, channel, auth.status]);
+
+  const closeSpellMenu = useCallback(() => setSpellMenu(null), []);
 
   // Keep the current channel's draft and history when the box goes away (Read only, empty grid).
   useEffect(
@@ -371,6 +392,7 @@ export function Composer({ channel, compact = false }: { channel: string | null;
   const length = Array.from(text).length;
 
   const submit = () => {
+    setSpellMenu(null);
     if (locked || !text.trim()) return;
     const result = chat.send(
       channel,
@@ -391,12 +413,13 @@ export function Composer({ channel, compact = false }: { channel: string | null;
     }
   };
 
-  const applySpelling = (span: SpellSpan, next: string) => {
-    const replaced = replaceSpellWord(text, span, next);
+  const applySpelling = (menu: SpellMenuState, next: string) => {
+    setSpellMenu(null);
+    if (!spellMenuIsCurrent(menu, channel, text)) return;
+    const replaced = replaceSpellWord(text, menu.span, next);
     setText(replaced.text);
     pendingCaret.current = replaced.caret;
     historyIndex.current = -1;
-    setSpellMenu(null);
     inputRef.current?.focus();
   };
 
@@ -417,9 +440,13 @@ export function Composer({ channel, compact = false }: { channel: string | null;
     event.preventDefault();
     const engine = loadSpellEngine(spellLanguageId);
     void engine.then((checker) => {
+      // This runs a moment after the right-click. Too late if the draft has moved on.
+      if (prevChannel.current !== channel || textRef.current !== text) return;
       setSpellMenu({
         x: event.clientX,
         y: event.clientY,
+        channel,
+        text,
         span,
         suggestions: rankSuggestions(span.word, checker.suggest(span.word)),
       });
@@ -481,12 +508,6 @@ export function Composer({ channel, compact = false }: { channel: string | null;
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (spellMenu && event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      setSpellMenu(null);
-      return;
-    }
     const decision = reduceComposerKey({
       key: event.key,
       shiftKey: event.shiftKey,
@@ -634,7 +655,8 @@ export function Composer({ channel, compact = false }: { channel: string | null;
                     x={spellMenu.x}
                     y={spellMenu.y}
                     suggestions={spellMenu.suggestions}
-                    onPick={(word) => applySpelling(spellMenu.span, word)}
+                    onPick={(word) => applySpelling(spellMenu, word)}
+                    onClose={closeSpellMenu}
                     onAdd={() => {
                       const word = spellMenu.span.word;
                       const exists = spellDictionary.some((entry) => entry.toLowerCase() === word.toLowerCase());
