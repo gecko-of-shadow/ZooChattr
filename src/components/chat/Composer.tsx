@@ -276,7 +276,11 @@ export function Composer({ channel, compact = false }: { channel: string | null;
     setSpellMenu(null);
   }, [text, channel, auth.status]);
 
-  const closeSpellMenu = useCallback(() => setSpellMenu(null), []);
+  const closeSpellMenu = useCallback(() => {
+    // With focus on a menu item, closing would drop it on the page and the next keys would go nowhere.
+    if (document.activeElement?.closest("[data-testid='spell-menu']")) inputRef.current?.focus();
+    setSpellMenu(null);
+  }, []);
 
   // Keep the current channel's draft and history when the box goes away (Read only, empty grid).
   useEffect(
@@ -435,7 +439,8 @@ export function Composer({ channel, compact = false }: { channel: string | null;
     if (!canvas) return;
     canvas.font = style.font;
     const at = indexAtWidth(text, x, (end) => canvas.measureText(text.slice(0, end)).width);
-    const span = misspellings.find((item) => at >= item.start && at < item.end);
+    // Underlines lag the text by a moment. One that no longer sits on its word doesn't count.
+    const span = misspellings.find((item) => at >= item.start && at < item.end && text.slice(item.start, item.end) === item.word);
     if (!span) return;
     event.preventDefault();
     const engine = loadSpellEngine(spellLanguageId);
@@ -661,11 +666,11 @@ export function Composer({ channel, compact = false }: { channel: string | null;
                       const word = spellMenu.span.word;
                       const exists = spellDictionary.some((entry) => entry.toLowerCase() === word.toLowerCase());
                       if (!exists) chat.updateSettings({ spellDictionary: [...spellDictionary, word] });
-                      setSpellMenu(null);
+                      closeSpellMenu();
                     }}
                     onIgnore={() => {
                       ignoreSpellWord(spellMenu.span.word);
-                      setSpellMenu(null);
+                      closeSpellMenu();
                     }}
                   />,
                   document.body,
@@ -686,6 +691,8 @@ export function Composer({ channel, compact = false }: { channel: string | null;
               style={{ fontSize: textSize }}
               onBlur={(event) => {
                 const next = event.relatedTarget;
+                // Focus going elsewhere (Ctrl+K, Settings) ends the menu, or it would sit there and take their first Esc.
+                if (!(next instanceof Element && next.closest("[data-testid='spell-menu']"))) setSpellMenu(null);
                 if (next instanceof Element && next.closest("[data-testid='tab-complete']")) return;
                 window.setTimeout(() => {
                   const active = document.activeElement;
