@@ -43,7 +43,6 @@ import {
   SPELL_LANGUAGE_OPTIONS,
   TAB_COMPLETE_HINT,
   TAB_COMPLETE_LABEL,
-  DEFAULT_SETTINGS,
   MENTION_COOLDOWN_MAX,
   MENTION_COOLDOWN_MIN,
   TEXT_SIZE_MAX,
@@ -52,10 +51,8 @@ import {
   clampMentionCooldown,
   clampTextSize,
   makeBackup,
-  NOT_SAVED_NOTE,
   parseWordList,
   readBackup,
-  restoreSummary,
   type ChannelFeature,
   type EmoteAnimation,
   type EmoteSize,
@@ -1051,17 +1048,8 @@ function BackupRow() {
       toast.error(`That ${source} isn't a ZooChattr settings backup.`);
       return;
     }
-    const historyTurnedOff = useChat.getState().settings.rememberChatHistory && !settings.rememberChatHistory;
-    chat.replacePreferences(settings);
-    const before = new Set(useChat.getState().settings.channels);
-    const added = settings.channels.filter((c) => !before.has(c));
+    const added = chat.restoreBackup(settings);
     for (const channel of added) chat.addChannel(channel);
-    const saveBlocked = chat.settingsSaveBlocked;
-    const show = saveBlocked ? toast.warning : toast.success;
-    show(saveBlocked ? "Settings restored for now" : "Settings restored", {
-      description: restoreSummary(added.length, historyTurnedOff, saveBlocked),
-      duration: historyTurnedOff || saveBlocked ? 15_000 : undefined,
-    });
   };
 
   const onFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1108,12 +1096,8 @@ function BackupRow() {
                 setConfirmReset(true);
                 return;
               }
-              chat.replacePreferences(DEFAULT_SETTINGS);
+              chat.resetPreferences();
               setConfirmReset(false);
-              const saveBlocked = chat.settingsSaveBlocked;
-              toast(saveBlocked ? "Settings reset for now" : "Settings reset", {
-                description: `Everything but your channels and login is back to the defaults.${saveBlocked ? ` ${NOT_SAVED_NOTE}` : ""}`,
-              });
             }}
           >
             <RotateCcw /> {confirmReset ? "Really reset?" : "Reset…"}

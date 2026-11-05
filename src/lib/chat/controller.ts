@@ -46,7 +46,17 @@ import {
 } from "@/lib/twitch/messages";
 import type { Badge, ChatMessage } from "@/lib/twitch/types";
 import { newChannelView, useChat, type ChannelView } from "@/store/chat";
-import { fitGridToView, focusOnGrid, isFeatureOn, sanitizeSettings, type Settings, type ViewMode } from "@/store/settings";
+import {
+  DEFAULT_SETTINGS,
+  NOT_SAVED_NOTE,
+  fitGridToView,
+  focusOnGrid,
+  isFeatureOn,
+  restoreSummary,
+  sanitizeSettings,
+  type Settings,
+  type ViewMode,
+} from "@/store/settings";
 import { moveItem, replaceGridSlot, swapItems } from "@/lib/view/reorder";
 import { clearPaneOf, EMPTY_PANE, fillFreePane, paneChannels, placeInPane, trimPanes } from "@/lib/view/panes";
 import { viewForSlots, type ViewSize } from "@/lib/gridLayout";
@@ -328,11 +338,6 @@ class ChatController {
         });
       }
     }, 0);
-  }
-
-  /** True while this window can't save, so a "restored" or "reset" message must say the change won't last. */
-  get settingsSaveBlocked(): boolean {
-    return this.savesBlocked;
   }
 
   /** Main window: reload preferences (and join any channels Settings added) after the popout saves. */
@@ -1447,6 +1452,34 @@ class ChatController {
       },
       { keepSavedHistory: true },
     );
+  }
+
+  /**
+   * Applies a backup and says what happened. Saved chat logs stay, even when the backup turns history off.
+   * Returns the backup's channels that aren't open, for the caller to join.
+   */
+  restoreBackup(backup: Settings): string[] {
+    const historyTurnedOff = get().settings.rememberChatHistory && !backup.rememberChatHistory;
+    this.replacePreferences(backup);
+    const known = new Set(get().settings.channels);
+    const added = backup.channels.filter((channel) => !known.has(channel));
+    const saveBlocked = this.savesBlocked;
+    const show = saveBlocked ? toast.warning : toast.success;
+    show(saveBlocked ? "Settings restored for now" : "Settings restored", {
+      description: restoreSummary(added.length, historyTurnedOff, saveBlocked),
+      duration: historyTurnedOff || saveBlocked ? 15_000 : undefined,
+    });
+    return added;
+  }
+
+  /** Puts every preference back to its default. */
+  resetPreferences(): void {
+    this.replacePreferences(DEFAULT_SETTINGS);
+    const saveBlocked = this.savesBlocked;
+    const show = saveBlocked ? toast.warning : toast;
+    show(saveBlocked ? "Settings reset for now" : "Settings reset", {
+      description: `Everything but your channels and login is back to the defaults.${saveBlocked ? ` ${NOT_SAVED_NOTE}` : ""}`,
+    });
   }
 
   /** Saves right away (so closing the window can't lose a change), one write at a time, latest state wins. */

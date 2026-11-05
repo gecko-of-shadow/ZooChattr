@@ -6,7 +6,7 @@ import { emoteRegistry } from "@/lib/emotes/registry";
 import * as platform from "@/lib/platform";
 import { settingsLoadFailure } from "@/lib/platform";
 import { newChannelView, useChat } from "@/store/chat";
-import { DEFAULT_SETTINGS } from "@/store/settings";
+import { DEFAULT_SETTINGS, NOT_SAVED_NOTE, restoreSummary } from "@/store/settings";
 import { useUi } from "@/store/ui";
 import type { ChatMessage } from "@/lib/twitch/types";
 import type { IrcMessage } from "@/lib/irc/parser";
@@ -241,6 +241,68 @@ describe("chat controller view and history", () => {
     expect(parseLog(memory.get(HISTORY_KEY)).map((row) => row.text)).toEqual(["keep me", "not saved yet"]);
   });
 
+  it("restoring a backup with history off keeps the logs and the toast says so", async () => {
+    const saved = await seedSavedLog();
+    const success = vi.spyOn(toast, "success");
+
+    chat.restoreBackup({ ...DEFAULT_SETTINGS, channels: ["geckotown"], rememberChatHistory: false });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(memory.get(HISTORY_KEY)).toBe(saved);
+    expect(useChat.getState().settings.rememberChatHistory).toBe(false);
+    expect(success).toHaveBeenCalledTimes(1);
+    const [title, options] = success.mock.calls[0];
+    expect(title).toBe("Settings restored");
+    expect(options?.description).toBe(restoreSummary(0, true));
+    expect(options?.duration).toBe(15_000);
+  });
+
+  it("the toast doesn't mention chat history when the restore didn't turn it off", async () => {
+    await seedSavedLog();
+    const success = vi.spyOn(toast, "success");
+    chat.restoreBackup({ ...DEFAULT_SETTINGS, channels: ["geckotown"], rememberChatHistory: true });
+    expect(success.mock.calls[0][1]?.description).toBe(restoreSummary(0, false));
+
+    // History already off: the restore turned nothing off, so there's nothing to warn about.
+    useChat.setState((s) => ({ settings: { ...s.settings, rememberChatHistory: false } }));
+    success.mockClear();
+    chat.restoreBackup({ ...DEFAULT_SETTINGS, channels: ["geckotown"], rememberChatHistory: false });
+    expect(success.mock.calls[0][1]?.description).toBe(restoreSummary(0, false));
+  });
+
+  it("hands back the channels to join, and the toast counts them", () => {
+    seed({ mode: "grid", focused: "a", gridChannels: ["a"], channels: ["a"] });
+    const success = vi.spyOn(toast, "success");
+    expect(chat.restoreBackup({ ...DEFAULT_SETTINGS, channels: ["a", "b"] })).toEqual(["b"]);
+    expect(success.mock.calls[0][1]?.description).toBe(restoreSummary(1, false));
+  });
+
+  it("restore and reset say the change won't last while saving is blocked", async () => {
+    settingsReadFailure = { error: { message: "os error 32", keptCopy: null } };
+    await bootMainWindow();
+    const warning = vi.spyOn(toast, "warning");
+    const success = vi.spyOn(toast, "success");
+
+    chat.restoreBackup({ ...DEFAULT_SETTINGS, rememberChatHistory: false });
+    expect(success).not.toHaveBeenCalled();
+    expect(warning.mock.calls[0][0]).toBe("Settings restored for now");
+    expect(warning.mock.calls[0][1]?.description).toBe(restoreSummary(0, true, true));
+
+    chat.resetPreferences();
+    expect(warning.mock.calls[1][0]).toBe("Settings reset for now");
+    expect(warning.mock.calls[1][1]?.description).toContain(NOT_SAVED_NOTE);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(memory.has(SETTINGS_KEY)).toBe(false);
+  });
+
+  it("reset says plainly what it did when saving works", () => {
+    seed({ mode: "grid", focused: "a", gridChannels: ["a"], channels: ["a"] });
+    const plain = vi.spyOn(toast, "warning");
+    chat.resetPreferences();
+    expect(plain).not.toHaveBeenCalled();
+    expect(JSON.parse(memory.get(SETTINGS_KEY) ?? "{}")).toMatchObject({ channels: ["a"] });
+  });
+
   it("the Settings toggle still wipes saved logs, as its hint says", async () => {
     await seedSavedLog();
     chat.updateSettings({ rememberChatHistory: false });
@@ -341,7 +403,7 @@ describe("chat controller view and history", () => {
       await clickViewButton();
 
       expect(memory.has(SETTINGS_KEY)).toBe(false);
-      expect(chat.settingsSaveBlocked).toBe(true);
+      expect(bootInternals().savesBlocked).toBe(true);
       expect(shown).toHaveBeenCalledTimes(1);
       const description = String(shown.mock.calls[0][1]?.description);
       if (keptCopy) {
