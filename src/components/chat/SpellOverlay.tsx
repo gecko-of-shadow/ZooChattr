@@ -148,6 +148,8 @@ export function SpellMenu({
     <div
       ref={menuRef}
       role="menu"
+      // Pressing a gap between the items must not take focus from the message box.
+      onMouseDown={(event) => event.preventDefault()}
       data-testid="spell-menu"
       className="fixed z-50 min-w-44 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
       style={{ left, top }}
