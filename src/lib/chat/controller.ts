@@ -46,7 +46,17 @@ import {
 } from "@/lib/twitch/messages";
 import type { Badge, ChatMessage } from "@/lib/twitch/types";
 import { newChannelView, useChat, type ChannelView } from "@/store/chat";
-import { fitGridToView, focusOnGrid, isFeatureOn, sanitizeSettings, type Settings, type ViewMode } from "@/store/settings";
+import {
+  DEFAULT_SETTINGS,
+  NOT_SAVED_NOTE,
+  fitGridToView,
+  focusOnGrid,
+  isFeatureOn,
+  restoreSummary,
+  sanitizeSettings,
+  type Settings,
+  type ViewMode,
+} from "@/store/settings";
 import { moveItem, replaceGridSlot, swapItems } from "@/lib/view/reorder";
 import { clearPaneOf, EMPTY_PANE, fillFreePane, paneChannels, placeInPane, trimPanes } from "@/lib/view/panes";
 import { viewForSlots, type ViewSize } from "@/lib/gridLayout";
@@ -86,6 +96,7 @@ type ServerFill = { channel: string; result: FillResult | null } | { channel: st
 const get = useChat.getState;
 const set = useChat.setState;
 const NO_CHATTERS: ActiveUser[] = [];
+const SETTINGS_PROBLEM_TOAST = "settings-problem";
 
 function anonymousNick(): string {
   return `justinfan${Math.floor(10_000 + Math.random() * 89_999)}`;
@@ -127,6 +138,7 @@ class ChatController {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private saving = false;
   private saveDirty = false;
+  private savesBlocked = false;
   private saveErrorShown = false;
   private pendingSends: PendingSend[] = [];
   private sentLog: number[] = [];
@@ -191,18 +203,14 @@ class ChatController {
     if (this.booted) return;
     this.booted = true;
 
-    const [rawSettings, appInfo] = await Promise.all([
-      platform.loadSettings().catch((err) => {
-        toast.error("Couldn't read your saved settings", { description: errorText(err) });
-        return null;
-      }),
-      platform.getAppInfo().catch(() => null),
-    ]);
+    const [saved, appInfo] = await Promise.all([this.readSavedSettings(), platform.getAppInfo().catch(() => null)]);
+    const rawSettings = saved.raw;
     const settings = sanitizeSettings(rawSettings);
     if (appInfo?.verify) setVerifyMode(true);
     void platform.setCloseToTray(settings.closeToTray).catch(() => undefined);
     // Verify mode must not delete or create the owner's Startup shortcut. Default startOnLogin is false.
-    if (!inVerifyMode()) void platform.setLaunchAtLogin(settings.startOnLogin).catch(() => undefined);
+    // Blocked means these are defaults, not the user's choice: leave the Startup shortcut as it is.
+    if (!inVerifyMode() && !this.savesBlocked) void platform.setLaunchAtLogin(settings.startOnLogin).catch(() => undefined);
     emoteRegistry.setPrefs(emotePrefsFrom(settings));
     set({
       settings,
@@ -211,6 +219,7 @@ class ChatController {
       ready: true,
       settingsLoaded: rawSettings !== null,
     });
+    this.showSettingsProblem(saved.failure);
 
     if (settings.rememberChatHistory) {
       await this.restoreHistory(settings.channels);
@@ -270,12 +279,13 @@ class ChatController {
     this.booted = true;
     this.settingsUiOnly = true;
 
-    const [rawSettings, appInfo, display] = await Promise.all([
-      platform.loadSettings().catch(() => null),
+    const [saved, appInfo, display] = await Promise.all([
+      this.readSavedSettings(),
       platform.getAppInfo().catch(() => null),
       // Login name only — never pull tokens into the Settings webview.
       platform.loadAuthDisplay().catch(() => null),
     ]);
+    const rawSettings = saved.raw;
     const settings = sanitizeSettings(rawSettings);
     if (appInfo?.verify) setVerifyMode(true);
     emoteRegistry.setPrefs(emotePrefsFrom(settings));
@@ -290,6 +300,47 @@ class ChatController {
         : { status: "anonymous" },
     });
     this.session = null;
+    this.showSettingsProblem(saved.failure);
+  }
+
+  /**
+   * A window that couldn't read settings.json holds defaults, so saving must stay off until a read
+   * works. The one exception: the main window, once the damaged file is moved aside, has nothing left
+   * to overwrite and can start fresh. The Settings window never can: the main window holds the real settings.
+   */
+  private async readSavedSettings(): Promise<{ raw: unknown | null; failure: platform.SettingsLoadFailure | null }> {
+    try {
+      return { raw: await platform.loadSettings(), failure: null };
+    } catch (err) {
+      const failure = platform.settingsLoadFailure(err);
+      this.savesBlocked = !failure.keptCopy || this.settingsUiOnly;
+      return { raw: null, failure };
+    }
+  }
+
+  /** Stays up until dismissed. Waits a tick so the Settings window's Toaster, which appears with `ready`, can catch it. */
+  private showSettingsProblem(failure: platform.SettingsLoadFailure | null): void {
+    if (!failure) return;
+    const blocked = this.savesBlocked;
+    const options = { id: SETTINGS_PROBLEM_TOAST, duration: Number.POSITIVE_INFINITY, closeButton: true };
+    setTimeout(() => {
+      if (!failure.keptCopy) {
+        toast.error("Couldn't read your saved settings", {
+          ...options,
+          description: `ZooChattr won't save any changes for now, so your saved settings stay safe. Restart ZooChattr to try again. (${failure.message})`,
+        });
+      } else if (blocked) {
+        toast.error("Your saved settings were damaged", {
+          ...options,
+          description: `The damaged file was kept as ${failure.keptCopy}. Changes made in this window won't be saved.`,
+        });
+      } else {
+        toast.error("Your saved settings were damaged", {
+          ...options,
+          description: `ZooChattr started fresh with default settings and no channels. The damaged file was kept as ${failure.keptCopy}.`,
+        });
+      }
+    }, 0);
   }
 
   /** Main window: reload preferences (and join any channels Settings added) after the popout saves. */
@@ -297,6 +348,12 @@ class ChatController {
     if (this.settingsUiOnly) return;
     const raw = await platform.loadSettings().catch(() => null);
     if (!raw) return;
+    if (this.savesBlocked) {
+      // A read worked at last. Whatever was waiting to save came from the defaults, so drop it.
+      this.savesBlocked = false;
+      this.saveDirty = false;
+      toast.dismiss(SETTINGS_PROBLEM_TOAST);
+    }
     const next = sanitizeSettings(raw);
     const before = get().settings;
     set({ settings: next });
@@ -1325,7 +1382,11 @@ class ChatController {
     }
   }
 
-  updateSettings(patch: Partial<Settings> | ((settings: Settings) => Partial<Settings>)): void {
+  /** `keepSavedHistory`: turning chat history off here stops saving but leaves the logs. Only the user's own toggle wipes them. */
+  updateSettings(
+    patch: Partial<Settings> | ((settings: Settings) => Partial<Settings>),
+    { keepSavedHistory = false }: { keepSavedHistory?: boolean } = {},
+  ): void {
     const before = get().settings;
     set((s) => {
       const next = { ...s.settings, ...(typeof patch === "function" ? patch(s.settings) : patch) };
@@ -1353,7 +1414,7 @@ class ChatController {
       this.armHistoryFlush();
     } else if (!after.rememberChatHistory && before.rememberChatHistory) {
       this.stopHistoryFlush();
-      void this.forgetAllHistory();
+      if (!keepSavedHistory) void this.forgetAllHistory();
     }
     if (after.autoCheckUpdates !== before.autoCheckUpdates) {
       this.armUpdateChecks(after.autoCheckUpdates);
@@ -1379,25 +1440,56 @@ class ChatController {
 
   /** Replaces every preference (not the channel list or view) with the ones from a backup or the defaults. */
   replacePreferences(source: Settings): void {
-    this.updateSettings((current) => {
-      const next: Partial<Settings> = { ...source };
-      delete next.channels;
-      delete next.gridChannels;
-      delete next.gridParked;
-      delete next.focused;
-      delete next.mode;
-      delete next.version;
-      // Keep the view pointing at a channel we actually have, and the pins within the (possibly new) view size.
-      // Same view size: a pane emptied on purpose stays empty.
-      const slots = next.gridSlots ?? current.gridSlots;
-      const refill = viewForSlots(slots) !== viewForSlots(current.gridSlots);
-      return { ...next, focused: current.focused, ...fitGridToView(current.gridChannels, current.gridParked, slots, refill) };
+    this.updateSettings(
+      (current) => {
+        const next: Partial<Settings> = { ...source };
+        delete next.channels;
+        delete next.gridChannels;
+        delete next.gridParked;
+        delete next.focused;
+        delete next.mode;
+        delete next.version;
+        // Keep the view pointing at a channel we actually have, and the pins within the (possibly new) view size.
+        // Same view size: a pane emptied on purpose stays empty.
+        const slots = next.gridSlots ?? current.gridSlots;
+        const refill = viewForSlots(slots) !== viewForSlots(current.gridSlots);
+        return { ...next, focused: current.focused, ...fitGridToView(current.gridChannels, current.gridParked, slots, refill) };
+      },
+      { keepSavedHistory: true },
+    );
+  }
+
+  /**
+   * Applies a backup and says what happened. Saved chat logs stay, even when the backup turns history off.
+   * Returns the backup's channels that aren't open, for the caller to join.
+   */
+  restoreBackup(backup: Settings): string[] {
+    const historyTurnedOff = get().settings.rememberChatHistory && !backup.rememberChatHistory;
+    this.replacePreferences(backup);
+    const known = new Set(get().settings.channels);
+    const added = backup.channels.filter((channel) => !known.has(channel));
+    const saveBlocked = this.savesBlocked;
+    const show = saveBlocked ? toast.warning : toast.success;
+    show(saveBlocked ? "Settings restored for now" : "Settings restored", {
+      description: restoreSummary(added.length, historyTurnedOff, saveBlocked),
+      duration: historyTurnedOff || saveBlocked ? 15_000 : undefined,
+    });
+    return added;
+  }
+
+  /** Puts every preference back to its default. */
+  resetPreferences(): void {
+    this.replacePreferences(DEFAULT_SETTINGS);
+    const saveBlocked = this.savesBlocked;
+    const show = saveBlocked ? toast.warning : toast;
+    show(saveBlocked ? "Settings reset for now" : "Settings reset", {
+      description: `Everything but your channels and login is back to the defaults.${saveBlocked ? ` ${NOT_SAVED_NOTE}` : ""}`,
     });
   }
 
   /** Saves right away (so closing the window can't lose a change), one write at a time, latest state wins. */
   private async persistSettings(): Promise<void> {
-    if (this.saving) return;
+    if (this.saving || this.savesBlocked) return;
     this.saving = true;
     try {
       while (this.saveDirty) {

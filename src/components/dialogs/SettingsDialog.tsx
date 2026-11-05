@@ -43,7 +43,6 @@ import {
   SPELL_LANGUAGE_OPTIONS,
   TAB_COMPLETE_HINT,
   TAB_COMPLETE_LABEL,
-  DEFAULT_SETTINGS,
   MENTION_COOLDOWN_MAX,
   MENTION_COOLDOWN_MIN,
   TEXT_SIZE_MAX,
@@ -1055,15 +1054,8 @@ function BackupRow() {
       toast.error(`That ${source} isn't a ZooChattr settings backup.`);
       return;
     }
-    chat.replacePreferences(settings);
-    const before = new Set(useChat.getState().settings.channels);
-    const added = settings.channels.filter((c) => !before.has(c));
+    const added = chat.restoreBackup(settings);
     for (const channel of added) chat.addChannel(channel);
-    toast.success("Settings restored", {
-      description: added.length
-        ? `Joined ${added.length} channel${added.length === 1 ? "" : "s"} from the backup too. Your login was left alone.`
-        : "Your channels and login were left as they were.",
-    });
   };
 
   const onFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1110,9 +1102,8 @@ function BackupRow() {
                 setConfirmReset(true);
                 return;
               }
-              chat.replacePreferences(DEFAULT_SETTINGS);
+              chat.resetPreferences();
               setConfirmReset(false);
-              toast("Settings reset", { description: "Everything but your channels and login is back to the defaults." });
             }}
           >
             <RotateCcw /> {confirmReset ? "Really reset?" : "Reset…"}

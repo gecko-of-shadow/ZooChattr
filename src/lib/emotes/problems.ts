@@ -1,5 +1,6 @@
 // Recent emote-download failures, kept so Settings → Problems can show why a source went quiet.
 // Mirrors Geckmotes' errlog: the last MAX entries, newest last, persisted in localStorage.
+import { isUsableTime } from "@/lib/chat/messageTime";
 import type { EmoteScope, ThirdPartyProvider } from "./types";
 
 const KEY = "zoochattr.problems";
@@ -35,9 +36,11 @@ function read(store: Storage): EmoteProblem[] {
     const out: EmoteProblem[] = [];
     for (const e of parsed) {
       if (!e || typeof e !== "object" || typeof e.provider !== "string" || typeof e.message !== "string") continue;
+      const at = Number(e.at);
       out.push({
         id: typeof e.id === "string" ? e.id : `${e.at}-${e.provider}`,
-        at: Number(e.at) || 0,
+        // Settings formats this, and a date past the range throws.
+        at: isUsableTime(at) ? at : 0,
         provider: e.provider as ThirdPartyProvider,
         scope: e.scope === "channel" ? "channel" : "global",
         channel: typeof e.channel === "string" ? e.channel : undefined,

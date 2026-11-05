@@ -172,3 +172,21 @@ describe("matchesHighlight", () => {
     expect(matchesHighlight("nothing here", [])).toBe(false);
   });
 });
+
+describe("message times from Twitch", () => {
+  const privmsg = (ts: string) => parseIrcLine(`@id=m1;tmi-sent-ts=${ts} :lizard!lizard@lizard.tmi.twitch.tv PRIVMSG #gecko :hi`)!;
+  const usernotice = (ts: string) => parseIrcLine(`@id=u1;login=raider;msg-id=raid;tmi-sent-ts=${ts} :tmi.twitch.tv USERNOTICE #gecko`)!;
+
+  it("keeps a normal time", () => {
+    expect(privmsgToChat(privmsg("1700000000000")).ts).toBe(1_700_000_000_000);
+    expect(usernoticeToChat(usernotice("1700000000000")).ts).toBe(1_700_000_000_000);
+  });
+
+  it.each(["999999999999999999", "8640000000000001", "1e400", "-1", "not a time"])("uses the current time for %s", (ts) => {
+    const before = Date.now();
+    for (const message of [privmsgToChat(privmsg(ts)), usernoticeToChat(usernotice(ts))]) {
+      expect(message.ts).toBeGreaterThanOrEqual(before);
+      expect(message.ts).toBeLessThanOrEqual(Date.now());
+    }
+  });
+});
