@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findMisspellings, indexAtWidth, isUrlOrDomain, rankSuggestions, replaceSpellWord, spellSuggestions, type SpellContext } from "./misspellings";
+import { findMisspellings, indexAtWidth, isUrlOrDomain, rankSuggestions, replaceSpellWord, spellMenuIsCurrent, spellSuggestions, type SpellContext } from "./misspellings";
 
 const KNOWN = new Set(["i", "the", "message", "receive", "uptime", "hello", "now", "someone"]);
 
@@ -78,5 +78,28 @@ describe("isUrlOrDomain", () => {
     expect(isUrlOrDomain("https://twitch.tv")).toBe(true);
     expect(isUrlOrDomain("twitch.tv")).toBe(true);
     expect(isUrlOrDomain("hello")).toBe(false);
+  });
+});
+
+describe("spellMenuIsCurrent", () => {
+  const target = { channel: "alpha", text: "I recieve teh", span: { start: 2, end: 9, word: "recieve" } };
+
+  it("is true for the draft the menu was opened on", () => {
+    expect(spellMenuIsCurrent(target, "alpha", "I recieve teh")).toBe(true);
+  });
+
+  it("is false in another channel, even with the same text", () => {
+    expect(spellMenuIsCurrent(target, "bravo", "I recieve teh")).toBe(false);
+    expect(spellMenuIsCurrent(target, null, "I recieve teh")).toBe(false);
+  });
+
+  it("is false once the text has changed", () => {
+    expect(spellMenuIsCurrent(target, "alpha", "good morning friends")).toBe(false);
+    expect(spellMenuIsCurrent(target, "alpha", "")).toBe(false);
+    expect(spellMenuIsCurrent(target, "alpha", "I recieve teh!")).toBe(false);
+  });
+
+  it("is false when the saved position doesn't hold the saved word", () => {
+    expect(spellMenuIsCurrent({ ...target, span: { start: 3, end: 10, word: "recieve" } }, "alpha", target.text)).toBe(false);
   });
 });

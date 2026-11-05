@@ -118,6 +118,18 @@ export function indexAtWidth(text: string, x: number, widthAt: (end: number) => 
 }
 
 /** Replace one flagged span and put the caret just after the new word. */
+/** The draft a spell menu was opened on. */
+export interface SpellMenuTarget {
+  channel: string;
+  text: string;
+  span: SpellSpan;
+}
+
+/** A fix may only touch the exact draft its menu was opened on, in the channel it was opened in. */
+export function spellMenuIsCurrent(target: SpellMenuTarget, channel: string | null, text: string): boolean {
+  return target.channel === channel && target.text === text && text.slice(target.span.start, target.span.end) === target.span.word;
+}
+
 export function replaceSpellWord(text: string, span: Pick<SpellSpan, "start" | "end">, next: string): { text: string; caret: number } {
   return {
     text: `${text.slice(0, span.start)}${next}${text.slice(span.end)}`,

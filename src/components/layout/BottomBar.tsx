@@ -1,5 +1,6 @@
 import { Settings } from "lucide-react";
 import { Composer, LoginPrompt } from "@/components/chat/Composer";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useChat } from "@/store/chat";
@@ -45,7 +46,12 @@ export function BottomBar({ channel }: { channel: string | null }) {
       </p>
     );
   } else if (channel) {
-    middle = <Composer channel={channel} />;
+    // Not `key`ed by channel: the box keeps its focus and drafts itself when the channel changes.
+    middle = (
+      <ErrorBoundary message="The message box can't be shown right now." compact resetKey={channel}>
+        <Composer channel={channel} />
+      </ErrorBoundary>
+    );
   } else if (anyChannel && !loggedIn) {
     middle = <LoginPrompt />;
   } else {

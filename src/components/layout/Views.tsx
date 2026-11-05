@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import { ContextMenu as ContextMenuPrimitive } from "@base-ui/react/context-menu";
 import { AlertTriangle, Clock, Link2, Lock, Minus, MoreHorizontal, RotateCw, Smile, UserRoundX, Users } from "lucide-react";
 import { ChatLog } from "@/components/chat/ChatLog";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Mascot } from "@/components/mascots/Mascot";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent } from "@/components/ui/popover";
@@ -564,7 +565,16 @@ export function GridView() {
         data-grid-cols={layout.columns}
         data-view={view}
       >
-        {shown.map((login, i) => (login ? <ChatBox key={login} login={login} index={i} /> : <EmptyPane key={`empty-${i}`} index={i} />))}
+        {shown.map((login, i) =>
+          login ? (
+            // One pane that can't be drawn leaves the others alone.
+            <ErrorBoundary key={login} message={`#${login} can't be shown right now.`} onClear={() => chat.hideFromGrid(login)} clearLabel="Clear this pane">
+              <ChatBox login={login} index={i} />
+            </ErrorBoundary>
+          ) : (
+            <EmptyPane key={`empty-${i}`} index={i} />
+          ),
+        )}
         {Array.from({ length: empty }, (_, i) => (
           <EmptyPane key={`empty-${shown.length + i}`} index={shown.length + i} />
         ))}

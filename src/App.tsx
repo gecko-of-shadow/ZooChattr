@@ -4,6 +4,7 @@ import { LoginDialog } from "@/components/dialogs/LoginDialog";
 import { QuitConfirmDialog } from "@/components/dialogs/QuitConfirmDialog";
 import { SettingsDialog } from "@/components/dialogs/SettingsDialog";
 import { Mascot } from "@/components/mascots/Mascot";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { BottomBar } from "@/components/layout/BottomBar";
 import { ConnectionBanner } from "@/components/layout/ChatHeader";
 import { QuickSwitcher } from "@/components/layout/QuickSwitcher";
@@ -165,13 +166,21 @@ export default function App() {
           <main className="relative flex min-w-0 flex-1 flex-col">
             {/* Nothing above the panes. Settings opens as a panel over the right part of the chats, above the bottom bar. */}
             <div className="relative flex min-h-0 flex-1 flex-col">
-              {mode === "grid" ? (
-                <GridView />
-              ) : focused ? (
-                <FocusedView key={focused} login={focused} />
-              ) : (
-                <EmptySingleView />
-              )}
+              {/* Settings and the bottom bar stay outside: they must still work when a chat can't be drawn. */}
+              <ErrorBoundary
+                message="This chat can't be shown right now."
+                resetKey={`${mode}:${focused}`}
+                onClear={mode === "grid" ? undefined : () => chat.clearSingle()}
+                clearLabel="Clear this pane"
+              >
+                {mode === "grid" ? (
+                  <GridView />
+                ) : focused ? (
+                  <FocusedView key={focused} login={focused} />
+                ) : (
+                  <EmptySingleView />
+                )}
+              </ErrorBoundary>
               <SettingsDialog />
               {chromeHidden ? <ChromeReveal /> : null}
             </div>
