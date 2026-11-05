@@ -1,3 +1,4 @@
+import { sentTime } from "@/lib/chat/messageTime";
 import { channelFromParam, type IrcMessage } from "@/lib/irc/parser";
 import type { Badge, ChatMessage, RoomState, TwitchEmoteRange, UserState } from "./types";
 
@@ -115,7 +116,7 @@ export function privmsgToChat(message: IrcMessage, selfLogin?: string): ChatMess
     id: tags.id || localId("msg"),
     channel: channelFromParam(message.params[0]),
     kind: action ? "action" : "chat",
-    ts: Number(tags["tmi-sent-ts"]) || Date.now(),
+    ts: sentTime(tags["tmi-sent-ts"]),
     login,
     userId: tags["user-id"],
     displayName: tags["display-name"] || login,
@@ -147,7 +148,7 @@ export function usernoticeToChat(message: IrcMessage, selfLogin?: string): ChatM
     id: tags.id || localId("event"),
     channel: channelFromParam(message.params[0]),
     kind: "event",
-    ts: Number(tags["tmi-sent-ts"]) || Date.now(),
+    ts: sentTime(tags["tmi-sent-ts"]),
     login,
     userId: tags["user-id"],
     displayName: tags["display-name"] || login,

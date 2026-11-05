@@ -2,6 +2,7 @@ import { memo, useMemo, useState, type ReactNode } from "react";
 import { CircleAlert, CornerDownRight, Highlighter, Info, LoaderCircle, Sparkles } from "lucide-react";
 import { GeckoEggIcon, GeckoTailIcon } from "@/components/mascots/icons";
 import { chat } from "@/lib/chat/controller";
+import { canFormatTime } from "@/lib/chat/messageTime";
 import { canReplyTo } from "@/lib/twitch/reply";
 import { setReplyTarget } from "@/store/ui";
 import { tokenize, type Fragment } from "@/lib/chat/tokenize";
@@ -31,7 +32,7 @@ const formatters = {
 };
 
 function formatTime(ts: number, use24h: boolean): string {
-  return (use24h ? formatters.h24 : formatters.h12).format(ts);
+  return canFormatTime(ts) ? (use24h ? formatters.h24 : formatters.h12).format(ts) : "";
 }
 
 function srcSet(urls: { url1x: string; url2x?: string; url4x?: string }): string | undefined {
