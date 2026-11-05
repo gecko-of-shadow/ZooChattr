@@ -460,6 +460,15 @@ export function readBackup(text: string): Settings | null {
 
 const GENERIC_KEYS = new Set(["version", "mode", "channels", "gridChannels", "focused"]);
 
+/** The toast text after a restore. A restore can turn chat history off; it never deletes saved logs. */
+export function restoreSummary(joined: number, historyTurnedOff: boolean): string {
+  const result = joined
+    ? `Joined ${joined} channel${joined === 1 ? "" : "s"} from the backup too. Your login was left alone.`
+    : "Your channels and login were left as they were.";
+  if (!historyTurnedOff) return result;
+  return `${result} Remember chat history is now off, as it was in the backup, so new chat won't be saved. Your saved chat logs were kept. To delete them, use Clear history in Settings → Account & history.`;
+}
+
 /** Whole number of grid boxes from 1 to {@link MAX_GRID_SLOTS}. Missing or junk stays at 4. */
 export function clampGridSlots(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);

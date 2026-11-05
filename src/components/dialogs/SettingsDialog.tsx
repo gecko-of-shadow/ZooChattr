@@ -54,6 +54,7 @@ import {
   makeBackup,
   parseWordList,
   readBackup,
+  restoreSummary,
   type ChannelFeature,
   type EmoteAnimation,
   type EmoteSize,
@@ -1049,14 +1050,14 @@ function BackupRow() {
       toast.error(`That ${source} isn't a ZooChattr settings backup.`);
       return;
     }
+    const historyTurnedOff = useChat.getState().settings.rememberChatHistory && !settings.rememberChatHistory;
     chat.replacePreferences(settings);
     const before = new Set(useChat.getState().settings.channels);
     const added = settings.channels.filter((c) => !before.has(c));
     for (const channel of added) chat.addChannel(channel);
     toast.success("Settings restored", {
-      description: added.length
-        ? `Joined ${added.length} channel${added.length === 1 ? "" : "s"} from the backup too. Your login was left alone.`
-        : "Your channels and login were left as they were.",
+      description: restoreSummary(added.length, historyTurnedOff),
+      duration: historyTurnedOff ? 15_000 : undefined,
     });
   };
 

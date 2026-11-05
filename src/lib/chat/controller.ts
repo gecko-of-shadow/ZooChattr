@@ -1362,7 +1362,11 @@ class ChatController {
     }
   }
 
-  updateSettings(patch: Partial<Settings> | ((settings: Settings) => Partial<Settings>)): void {
+  /** `keepSavedHistory`: turning chat history off here stops saving but leaves the logs. Only the user's own toggle wipes them. */
+  updateSettings(
+    patch: Partial<Settings> | ((settings: Settings) => Partial<Settings>),
+    { keepSavedHistory = false }: { keepSavedHistory?: boolean } = {},
+  ): void {
     const before = get().settings;
     set((s) => {
       const next = { ...s.settings, ...(typeof patch === "function" ? patch(s.settings) : patch) };
@@ -1390,7 +1394,7 @@ class ChatController {
       this.armHistoryFlush();
     } else if (!after.rememberChatHistory && before.rememberChatHistory) {
       this.stopHistoryFlush();
-      void this.forgetAllHistory();
+      if (!keepSavedHistory) void this.forgetAllHistory();
     }
     if (after.autoCheckUpdates !== before.autoCheckUpdates) {
       this.armUpdateChecks(after.autoCheckUpdates);
@@ -1416,20 +1420,23 @@ class ChatController {
 
   /** Replaces every preference (not the channel list or view) with the ones from a backup or the defaults. */
   replacePreferences(source: Settings): void {
-    this.updateSettings((current) => {
-      const next: Partial<Settings> = { ...source };
-      delete next.channels;
-      delete next.gridChannels;
-      delete next.gridParked;
-      delete next.focused;
-      delete next.mode;
-      delete next.version;
-      // Keep the view pointing at a channel we actually have, and the pins within the (possibly new) view size.
-      // Same view size: a pane emptied on purpose stays empty.
-      const slots = next.gridSlots ?? current.gridSlots;
-      const refill = viewForSlots(slots) !== viewForSlots(current.gridSlots);
-      return { ...next, focused: current.focused, ...fitGridToView(current.gridChannels, current.gridParked, slots, refill) };
-    });
+    this.updateSettings(
+      (current) => {
+        const next: Partial<Settings> = { ...source };
+        delete next.channels;
+        delete next.gridChannels;
+        delete next.gridParked;
+        delete next.focused;
+        delete next.mode;
+        delete next.version;
+        // Keep the view pointing at a channel we actually have, and the pins within the (possibly new) view size.
+        // Same view size: a pane emptied on purpose stays empty.
+        const slots = next.gridSlots ?? current.gridSlots;
+        const refill = viewForSlots(slots) !== viewForSlots(current.gridSlots);
+        return { ...next, focused: current.focused, ...fitGridToView(current.gridChannels, current.gridParked, slots, refill) };
+      },
+      { keepSavedHistory: true },
+    );
   }
 
   /** Saves right away (so closing the window can't lose a change), one write at a time, latest state wins. */

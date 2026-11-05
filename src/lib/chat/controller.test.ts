@@ -14,6 +14,7 @@ import type { IrcMessage } from "@/lib/irc/parser";
 const memory = new Map<string, string>();
 const tabMemory = new Map<string, string>();
 const SETTINGS_KEY = "zoochattr.settings";
+const HISTORY_KEY = "zoochattr.chat.geckotown";
 /** What the next settings read fails with, as settings_load would reject. */
 let settingsReadFailure: { error: unknown } | null = null;
 
@@ -202,6 +203,56 @@ describe("chat controller view and history", () => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  /** History on, one line saved for geckotown. The stub storage can't list its keys, so the wipe is stubbed too. */
+  async function seedSavedLog(): Promise<string> {
+    vi.spyOn(platform, "clearChatHistory").mockImplementation(async () => void memory.delete(HISTORY_KEY));
+    seed({ mode: "grid", focused: "geckotown", gridChannels: ["geckotown"], channels: ["geckotown"], remember: true });
+    putMessage("geckotown", line("geckotown", "keep me"));
+    (chat as unknown as { historyUnsaved: Set<string> }).historyUnsaved.add("geckotown");
+    await chat.flushSavedHistory();
+    const saved = memory.get(HISTORY_KEY);
+    expect(parseLog(saved).map((row) => row.text)).toEqual(["keep me"]);
+    return saved ?? "";
+  }
+
+  it("a restore that turns history off keeps every saved log", async () => {
+    const saved = await seedSavedLog();
+
+    chat.replacePreferences({ ...DEFAULT_SETTINGS, rememberChatHistory: false });
+    await vi.advanceTimersByTimeAsync(HISTORY_FLUSH_MS * 2);
+
+    expect(memory.get(HISTORY_KEY)).toBe(saved);
+    expect(useChat.getState().settings.rememberChatHistory).toBe(false);
+    expect(JSON.parse(memory.get(SETTINGS_KEY) ?? "{}")).toMatchObject({ rememberChatHistory: false });
+  });
+
+  it("after that restore, new chat isn't saved until history is back on, and old lines aren't written twice", async () => {
+    await seedSavedLog();
+    chat.replacePreferences({ ...DEFAULT_SETTINGS, rememberChatHistory: false });
+
+    putMessage("geckotown", line("geckotown", "not saved yet"));
+    await vi.advanceTimersByTimeAsync(HISTORY_FLUSH_MS * 2);
+    expect(parseLog(memory.get(HISTORY_KEY)).map((row) => row.text)).toEqual(["keep me"]);
+
+    chat.updateSettings({ rememberChatHistory: true });
+    await vi.advanceTimersByTimeAsync(HISTORY_FLUSH_MS + 1);
+    expect(parseLog(memory.get(HISTORY_KEY)).map((row) => row.text)).toEqual(["keep me", "not saved yet"]);
+  });
+
+  it("the Settings toggle still wipes saved logs, as its hint says", async () => {
+    await seedSavedLog();
+    chat.updateSettings({ rememberChatHistory: false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(memory.has(HISTORY_KEY)).toBe(false);
+  });
+
+  it("Clear history still works while history is off after a restore", async () => {
+    await seedSavedLog();
+    chat.replacePreferences({ ...DEFAULT_SETTINGS, rememberChatHistory: false });
+    await chat.clearSavedHistory();
+    expect(memory.has(HISTORY_KEY)).toBe(false);
   });
 
   it("settings_load's two kinds of failure both read back with their message", () => {

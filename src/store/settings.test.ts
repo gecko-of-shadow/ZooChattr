@@ -10,6 +10,7 @@ import {
   makeBackup,
   parseWordList,
   readBackup,
+  restoreSummary,
   sanitizeSettings,
 } from "./settings";
 
@@ -330,6 +331,23 @@ describe("backups", () => {
   it("restores a 0.5.0 backup that has no Auto theme keys", () => {
     const old = JSON.stringify({ zoochattr: 1, savedAt: "2026-10-26T00:00:00Z", settings: { channels: ["xqc"], skin: "tritanopia" } });
     expect(readBackup(old)).toMatchObject({ skin: "tritanopia", autoLightSkin: "light", autoDarkSkin: "crested" });
+  });
+
+  it("the restore message stays as it was when chat history wasn't touched", () => {
+    expect(restoreSummary(0, false)).toBe("Your channels and login were left as they were.");
+    expect(restoreSummary(1, false)).toBe("Joined 1 channel from the backup too. Your login was left alone.");
+    expect(restoreSummary(3, false)).toBe("Joined 3 channels from the backup too. Your login was left alone.");
+  });
+
+  it("the restore message says plainly when chat history was turned off and the logs were kept", () => {
+    for (const joined of [0, 2]) {
+      const text = restoreSummary(joined, true);
+      expect(text).toContain("Remember chat history is now off");
+      expect(text).toContain("new chat won't be saved");
+      expect(text).toContain("Your saved chat logs were kept");
+      expect(text).toContain("Clear history");
+    }
+    expect(restoreSummary(2, true)).toContain("Joined 2 channels");
   });
 });
 
