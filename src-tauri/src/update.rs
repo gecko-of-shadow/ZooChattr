@@ -309,6 +309,7 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
     //   swapped back here. Rollback copies through a temp name, because a failed `copy` deletes its destination.
     // - "Is it running" is an open for append, which fails while an exe runs. Renaming wouldn't tell: a running exe
     //   CAN be renamed. The `if not exist` comes first because `>>` would create a missing file.
+    // - A read-only exe would look like a running one to that check, hence the `attrib`.
     // - `start` stops on a Windows error box for a file that isn't there, hence the checks before it.
     // - Started with `start`, cmd runs this with /K and would stay open, hence the `exit`. It shares a line with
     //   the `del` because cmd can't read another line from a file it has just deleted.
@@ -317,7 +318,9 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
         "@echo off\r\n\
          setlocal\r\n\
          set \"timeout=%SystemRoot%\\System32\\timeout.exe\"\r\n\
+         set made_bak=\r\n\
          set tries=0\r\n\
+         attrib -r \"{current}\" >nul 2>nul\r\n\
          :wait\r\n\
          \"%timeout%\" /t 1 /nobreak >nul\r\n\
          if not exist \"{current}\" goto swap\r\n\
@@ -330,7 +333,8 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
          if not exist \"{current}\" goto place\r\n\
          del /f /q \"{bak}\" 2>nul\r\n\
          copy /b /y \"{current}\" \"{bak}\" >nul 2>nul\r\n\
-         if errorlevel 1 goto keep_old\r\n\
+         if errorlevel 1 goto restart\r\n\
+         set made_bak=1\r\n\
          :place\r\n\
          set tries=0\r\n\
          :place_again\r\n\
@@ -365,7 +369,7 @@ fn windows_helper_script(current_exe: &Path, new_exe: &Path, exit_tries: u32, pl
          if errorlevel 1 del /f /q \"{bak}.tmp\" 2>nul\r\n\
          goto restart\r\n\
          :keep_old\r\n\
-         del /f /q \"{bak}\" 2>nul\r\n\
+         if defined made_bak del /f /q \"{bak}\" 2>nul\r\n\
          :restart\r\n\
          if not exist \"{current}\" goto finish\r\n\
          del /f /q \"{new}\" 2>nul\r\n\
@@ -768,6 +772,29 @@ mod swap_tests {
         holder.join().unwrap();
         assert!(fs::read(&rig.current).unwrap() == rig.new_bytes, "nothing could be put back, and nothing was lost");
         assert!(fs::read(&rig.bak).unwrap() == rig.old_bytes);
+    }
+
+    #[test]
+    fn a_read_only_exe_still_updates() {
+        let rig = Rig::new("readonly");
+        let mut read_only = fs::metadata(&rig.current).unwrap().permissions();
+        read_only.set_readonly(true);
+        fs::set_permissions(&rig.current, read_only).unwrap();
+        rig.start_helper(4, 3);
+        rig.wait_for_helper(20);
+        rig.assert_swapped();
+    }
+
+    #[test]
+    fn a_failed_swap_keeps_a_backup_it_did_not_make() {
+        let rig = Rig::new("notours");
+        fs::rename(&rig.current, &rig.bak).unwrap();
+        let hold = fs::OpenOptions::new().read(true).share_mode(0).open(&rig.new).unwrap();
+        rig.start_helper(10, 2);
+        rig.wait_for_helper(20);
+        drop(hold);
+        assert!(fs::read(&rig.bak).unwrap() == rig.old_bytes, "the only copy of the old exe must stay");
+        assert!(rig.new.exists());
     }
 
     #[test]
