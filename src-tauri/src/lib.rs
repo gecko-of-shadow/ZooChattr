@@ -77,6 +77,8 @@ fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
 
 #[tauri::command]
 fn settings_load(state: State<'_, AppState>) -> Result<Option<serde_json::Value>, storage::SettingsLoadError> {
+    // A load can move the file aside, so it must never overlap a save.
+    let _guard = state.save_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     storage::load_settings(&state.data)
 }
 

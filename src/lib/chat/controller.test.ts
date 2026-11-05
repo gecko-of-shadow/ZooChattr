@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { chat, HISTORY_FLUSH_MS, ALL_CHANNELS } from "@/lib/chat/controller";
 import { config } from "@/lib/config";
 import { emoteRegistry } from "@/lib/emotes/registry";
+import * as platform from "@/lib/platform";
 import { settingsLoadFailure } from "@/lib/platform";
 import { newChannelView, useChat } from "@/store/chat";
 import { DEFAULT_SETTINGS } from "@/store/settings";
@@ -232,6 +233,20 @@ describe("chat controller view and history", () => {
     expect(String(options?.description)).toContain("won't save");
     expect(String(options?.description)).toContain("Restart ZooChattr");
     expect(String(options?.description)).toContain("os error 32");
+  });
+
+  it("leaves start-on-login alone when it couldn't read what the setting was", async () => {
+    const launch = vi.spyOn(platform, "setLaunchAtLogin");
+    settingsReadFailure = { error: { message: "os error 32", keptCopy: null } };
+    await bootMainWindow();
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("applies start-on-login as usual after a normal start", async () => {
+    const launch = vi.spyOn(platform, "setLaunchAtLogin");
+    memory.set(SETTINGS_KEY, JSON.stringify({ channels: [], startOnLogin: true }));
+    await bootMainWindow();
+    expect(launch).toHaveBeenCalledWith(true);
   });
 
   it("treats a plain-text read failure as a blocked file too", async () => {

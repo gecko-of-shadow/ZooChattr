@@ -197,7 +197,8 @@ class ChatController {
     const rawSettings = saved.raw;
     const settings = sanitizeSettings(rawSettings);
     void platform.setCloseToTray(settings.closeToTray).catch(() => undefined);
-    void platform.setLaunchAtLogin(settings.startOnLogin).catch(() => undefined);
+    // Blocked means these are defaults, not the user's choice: leave the Startup shortcut as it is.
+    if (!this.savesBlocked) void platform.setLaunchAtLogin(settings.startOnLogin).catch(() => undefined);
     emoteRegistry.setPrefs(emotePrefsFrom(settings));
     set({
       settings,

@@ -97,6 +97,7 @@ fn set_aside_settings(folder: &Path, file: &Path) -> std::io::Result<PathBuf> {
 
 /// `Ok(None)` is only a real first run: no file at all. Anything else that can't be used as
 /// settings is an error, so the app can't mistake a damaged file for a fresh start.
+/// The app has always written a `channels` list, so a file without one isn't ours to overwrite.
 pub fn load_settings(data: &DataDir) -> Result<Option<serde_json::Value>, SettingsLoadError> {
     let file = data.path.join(SETTINGS_FILE);
     let unread = |detail: String| SettingsLoadError {
@@ -110,7 +111,7 @@ pub fn load_settings(data: &DataDir) -> Result<Option<serde_json::Value>, Settin
     };
 
     let problem = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(value) if value.is_object() => return Ok(Some(value)),
+        Ok(value) if value.get("channels").is_some_and(serde_json::Value::is_array) => return Ok(Some(value)),
         Ok(_) => "it doesn't hold settings".to_string(),
         Err(err) => err.to_string(),
     };
@@ -485,6 +486,10 @@ mod tests {
     fn json_that_is_not_a_settings_object_is_set_aside() {
         assert_set_aside("json-null", b"null");
         assert_set_aside("json-list", b"[]");
+        assert_set_aside("json-empty-object", b"{}");
+        assert_set_aside("json-bad-channels", br#"{"channels":"xqc"}"#);
+        // A backup copied over settings.json by hand: the channels are one level down.
+        assert_set_aside("json-backup", br#"{"zoochattr":1,"settings":{"channels":["xqc"]}}"#);
     }
 
     #[test]
