@@ -341,7 +341,17 @@ describe("chat controller view and history", () => {
       await clickViewButton();
 
       expect(memory.has(SETTINGS_KEY)).toBe(false);
+      expect(chat.settingsSaveBlocked).toBe(true);
       expect(shown).toHaveBeenCalledTimes(1);
+      const description = String(shown.mock.calls[0][1]?.description);
+      if (keptCopy) {
+        // The file has been moved, so "stay safe" and "try again" would both be false here.
+        expect(description).toContain(keptCopy);
+        expect(description).toContain("won't be saved");
+        expect(description).not.toContain("try again");
+      } else {
+        expect(description).toContain("try again");
+      }
     }
   });
 

@@ -311,10 +311,15 @@ class ChatController {
     const blocked = this.savesBlocked;
     const options = { id: SETTINGS_PROBLEM_TOAST, duration: Number.POSITIVE_INFINITY, closeButton: true };
     setTimeout(() => {
-      if (blocked) {
+      if (!failure.keptCopy) {
         toast.error("Couldn't read your saved settings", {
           ...options,
           description: `ZooChattr won't save any changes for now, so your saved settings stay safe. Restart ZooChattr to try again. (${failure.message})`,
+        });
+      } else if (blocked) {
+        toast.error("Your saved settings were damaged", {
+          ...options,
+          description: `The damaged file was kept as ${failure.keptCopy}. Changes made in this window won't be saved.`,
         });
       } else {
         toast.error("Your saved settings were damaged", {
@@ -323,6 +328,11 @@ class ChatController {
         });
       }
     }, 0);
+  }
+
+  /** True while this window can't save, so a "restored" or "reset" message must say the change won't last. */
+  get settingsSaveBlocked(): boolean {
+    return this.savesBlocked;
   }
 
   /** Main window: reload preferences (and join any channels Settings added) after the popout saves. */

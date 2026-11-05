@@ -52,6 +52,7 @@ import {
   clampMentionCooldown,
   clampTextSize,
   makeBackup,
+  NOT_SAVED_NOTE,
   parseWordList,
   readBackup,
   restoreSummary,
@@ -1055,9 +1056,11 @@ function BackupRow() {
     const before = new Set(useChat.getState().settings.channels);
     const added = settings.channels.filter((c) => !before.has(c));
     for (const channel of added) chat.addChannel(channel);
-    toast.success("Settings restored", {
-      description: restoreSummary(added.length, historyTurnedOff),
-      duration: historyTurnedOff ? 15_000 : undefined,
+    const saveBlocked = chat.settingsSaveBlocked;
+    const show = saveBlocked ? toast.warning : toast.success;
+    show(saveBlocked ? "Settings restored for now" : "Settings restored", {
+      description: restoreSummary(added.length, historyTurnedOff, saveBlocked),
+      duration: historyTurnedOff || saveBlocked ? 15_000 : undefined,
     });
   };
 
@@ -1107,7 +1110,10 @@ function BackupRow() {
               }
               chat.replacePreferences(DEFAULT_SETTINGS);
               setConfirmReset(false);
-              toast("Settings reset", { description: "Everything but your channels and login is back to the defaults." });
+              const saveBlocked = chat.settingsSaveBlocked;
+              toast(saveBlocked ? "Settings reset for now" : "Settings reset", {
+                description: `Everything but your channels and login is back to the defaults.${saveBlocked ? ` ${NOT_SAVED_NOTE}` : ""}`,
+              });
             }}
           >
             <RotateCcw /> {confirmReset ? "Really reset?" : "Reset…"}

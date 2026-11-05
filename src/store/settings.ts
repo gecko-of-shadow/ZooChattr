@@ -460,13 +460,23 @@ export function readBackup(text: string): Settings | null {
 
 const GENERIC_KEYS = new Set(["version", "mode", "channels", "gridChannels", "focused"]);
 
+/** Added to a "restored" or "reset" message while settings can't be saved. */
+export const NOT_SAVED_NOTE = "This couldn't be saved, so it will be gone after a restart.";
+
 /** The toast text after a restore. A restore can turn chat history off; it never deletes saved logs. */
-export function restoreSummary(joined: number, historyTurnedOff: boolean): string {
-  const result = joined
-    ? `Joined ${joined} channel${joined === 1 ? "" : "s"} from the backup too. Your login was left alone.`
-    : "Your channels and login were left as they were.";
-  if (!historyTurnedOff) return result;
-  return `${result} Remember chat history is now off, as it was in the backup, so new chat won't be saved. Your saved chat logs were kept. To delete them, use Clear history in Settings → Account & history.`;
+export function restoreSummary(joined: number, historyTurnedOff: boolean, saveBlocked = false): string {
+  const parts = [
+    joined
+      ? `Joined ${joined} channel${joined === 1 ? "" : "s"} from the backup too. Your login was left alone.`
+      : "Your channels and login were left as they were.",
+  ];
+  if (historyTurnedOff) {
+    parts.push(
+      "Remember chat history is now off, as it was in the backup, so new chat won't be saved. Your saved chat logs were kept. To delete them, use Clear history in Settings → Account & history.",
+    );
+  }
+  if (saveBlocked) parts.push(NOT_SAVED_NOTE);
+  return parts.join(" ");
 }
 
 /** Whole number of grid boxes from 1 to {@link MAX_GRID_SLOTS}. Missing or junk stays at 4. */

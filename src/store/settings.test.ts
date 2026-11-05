@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SETTINGS,
+  NOT_SAVED_NOTE,
   clampMentionCooldown,
   clampTextSize,
   cleanChannelOverrides,
@@ -348,6 +349,13 @@ describe("backups", () => {
       expect(text).toContain("Clear history");
     }
     expect(restoreSummary(2, true)).toContain("Joined 2 channels");
+  });
+
+  it("the restore message says so when nothing could be saved", () => {
+    expect(restoreSummary(0, false, true)).toContain(NOT_SAVED_NOTE);
+    expect(restoreSummary(0, true, true)).toContain(NOT_SAVED_NOTE);
+    expect(restoreSummary(0, true, false)).not.toContain(NOT_SAVED_NOTE);
+    expect(NOT_SAVED_NOTE).toContain("gone after a restart");
   });
 });
 
