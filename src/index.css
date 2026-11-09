@@ -713,6 +713,12 @@
   content-visibility: auto;
   contain-intrinsic-size: auto 1.75em;
 }
+/* The newest rows stay laid out. A skipped row is measured as 1.75em, so pinning to the
+   bottom stops short of a wrapped last line (a long link) and stays there while nothing
+   else re-pins. Rows that scroll out of this window keep the size they already had. */
+.chat-log > .chat-row:nth-last-child(-n + 30) {
+  content-visibility: visible;
+}
 .chat-row.chat-row-deleted .chat-text {
   text-decoration: line-through;
   text-decoration-color: var(--zc-muted);

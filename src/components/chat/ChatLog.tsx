@@ -128,6 +128,11 @@ export function ChatLog({
     if (!pause) {
       // Already pinned. Writing scrollTop again forces a layout under the caret.
       if (el.scrollHeight - el.scrollTop - el.clientHeight > 2) el.scrollTop = el.scrollHeight;
+      // A row that finishes laying out a frame later (wrapped link, late font) must not leave the last line short.
+      const id = requestAnimationFrame(() => {
+        if (!pauseRef.current && el.scrollHeight - el.scrollTop - el.clientHeight > 2) el.scrollTop = el.scrollHeight;
+      });
+      return () => cancelAnimationFrame(id);
     } else if (anchorFromBottom.current !== null) {
       // Older history was just rendered above the viewport; keep the same lines in view.
       el.scrollTop = el.scrollHeight - anchorFromBottom.current;
