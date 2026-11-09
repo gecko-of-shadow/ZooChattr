@@ -1,6 +1,6 @@
 [package]
 name = "zoochattr"
-version = "0.7.4"
+version = "0.7.5"
 description = "ZooChattr: multi-channel Twitch chat with a gecko soul"
 authors = ["gecko-of-shadow"]
 edition = "2024"
