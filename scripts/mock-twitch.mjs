@@ -416,6 +416,13 @@ const httpServer = http.createServer(async (req, res) => {
     case "POST /__heavy/off":
       heavyRate = 0;
       return json(res, 200, { rate: 0 });
+    // Pause/resume the random ambient chatter so a test can count exact mentions.
+    case "POST /__quiet":
+      ambientPaused = true;
+      return json(res, 200, { ambient: "paused" });
+    case "POST /__quiet/off":
+      ambientPaused = false;
+      return json(res, 200, { ambient: "running" });
     case "POST /__burst": {
       const channel = url.searchParams.get("channel") ?? "";
       const count = Number(url.searchParams.get("n") ?? 50);
@@ -572,6 +579,8 @@ const heavyLines = [
   "KEKW LilZ geckoPog",
   "catJAM this room is flying",
 ];
+/** POST /__quiet stops the random lines below (one of them mentions geckotester); /__quiet/off resumes. */
+let ambientPaused = false;
 /** Messages per second per joined channel. 0 until POST /__heavy?rate=50 or MOCK_HEAVY. */
 let heavyRate = Math.max(0, Number(process.env.MOCK_HEAVY ?? 0));
 setInterval(() => {
@@ -587,6 +596,7 @@ setInterval(() => {
   }
 }, 100);
 setInterval(() => {
+  if (ambientPaused) return;
   for (const client of clients) {
     for (const channel of client.channels) {
       if (Math.random() < 0.55) continue;

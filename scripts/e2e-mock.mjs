@@ -636,6 +636,9 @@ await step("highlight words count as mentions", async () => {
 });
 
 await step("mention sound chimes once per cooldown for any open chat", async () => {
+  // The mock's random chatter includes "@geckotester you seeing this?", which would chime mid-count.
+  await mockPost("/__quiet");
+  await page.waitForTimeout(300);
   await openSettings("Chat & mentions");
   await page.locator('label[for="pref-mention-sound"]').click();
   const cooldown = page.getByLabel("Mention sound cooldown in seconds");
@@ -661,6 +664,7 @@ await step("mention sound chimes once per cooldown for any open chat", async () 
   await page.locator('.chat-row[data-mention="true"]', { hasText: "nice take" }).waitFor({ timeout: 8_000 });
   await page.waitForFunction((n) => window.__zoochattrStats().mentionChimes > n, held, { timeout: 8_000 });
 });
+await mockPost("/__quiet/off"); // resume even if the step above failed
 
 await step("text size, emote size and sources apply straight away", async () => {
   await openSettings("Appearance");

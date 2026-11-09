@@ -34,5 +34,7 @@ export default defineConfig(() => ({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // Tests are pure functions; sharing workers across files cuts the run by a few seconds.
+    isolate: false,
   },
 }));
