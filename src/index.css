@@ -713,6 +713,13 @@
   content-visibility: auto;
   contain-intrinsic-size: auto 1.75em;
 }
+/* The newest rows are always laid out at their real height. A new row that only has the guessed height above
+   makes the log stop short of the bottom, and a tall row (big emotes) is then cut off by the bottom edge.
+   `contain` keeps what `auto` gives a row that is on screen, so these rows look the same as all the others. */
+.chat-row:nth-last-child(-n + 12) {
+  content-visibility: visible;
+  contain: layout style paint;
+}
 .chat-row.chat-row-deleted .chat-text {
   text-decoration: line-through;
   text-decoration-color: var(--zc-muted);
