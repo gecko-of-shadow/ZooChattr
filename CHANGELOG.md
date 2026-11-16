@@ -1,6 +1,14 @@
 # Changelog
 
-All notable changes to ZooChattr are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Dates are the GitHub release date where a release exists, otherwise the date of the version tag (UTC).
+All notable changes to ZooChattr are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Dates are the GitHub release date where a release exists, otherwise the date of the tagged commit (UTC).
+
+GitHub releases exist for v0.7.3 to v0.7.6. Older versions are git tags only; their entries come from the commit messages.
+
+## [Unreleased]
+
+### Changed
+
+- Docs: README restructured and shortened. CHANGELOG lists every tagged version.
 
 ## [0.7.6] - 2026-11-15
 
@@ -116,6 +124,235 @@ All notable changes to ZooChattr are listed here, newest first. The format follo
 - The unused `next-themes` dependency.
 - `export` on helpers that were only used in their own file (spell ranking data, grid-slot sanitizers, color hashing, history boundary prefix, fuzzy score and similar).
 
+## [0.4.22] - 2026-10-14
+
+### Added
+
+- Reply to a chat line: hover a message and choose Reply to send a Twitch reply.
+- Tab completion also completes names of people who have spoken in that channel.
+
+## [0.4.21] - 2026-10-14
+
+### Fixed
+
+- The message box stays responsive while chat moves. Edge no longer spellchecks the caret on every arrow key, and a new chat line no longer redraws every visible row.
+
+## [0.4.20] - 2026-10-13
+
+### Changed
+
+- Chat history stays in memory and is appended to disk every 30 seconds as JSON Lines, instead of rewriting the whole log about every 2 seconds. Lines older than 48 hours are trimmed once at start. A clean quit writes the buffer.
+
+## [0.4.19] - 2026-10-13
+
+### Changed
+
+- The app icon is a single cream chat bubble with a gecko pupil.
+
+### Removed
+
+- Edge's "Import passwords" item and other browser commands from the right-click menu.
+
+## [0.4.18] - 2026-10-13
+
+### Fixed
+
+- The appearance themes (Dark, Light, Deuteranopia, Protanopia, Tritanopia, Eye comfort) and Read only are back. The 0.4.15 merge had left them out.
+
+## [0.4.17] - 2026-10-13
+
+### Fixed
+
+- A channel off the grid now gains unread lines in grid mode.
+- A late Twitch echo no longer misses the saved log or shows next to the failed local copy.
+- Each channel keeps its own draft. Settings search looks only at settings on screen. A window on a monitor left of or above the main monitor is restored. The tray focuses Settings instead of the disabled main window.
+
+## [0.4.16] - 2026-10-13
+
+### Changed
+
+- Faster live chat: paused history mounts a window of rows, not the whole buffer; the sidebar, header and message boxes no longer redraw on every line; mention matching is reused; history saves skip a copy when nothing changed.
+- The release workflow deletes older GitHub releases after each publish (tags stay). Reverted in 0.5.0.
+
+## [0.4.15] - 2026-10-13
+
+### Added
+
+- Mention sound (off by default): one chime for your name, a reply to you or a highlight word in any joined chat, then a cooldown.
+- The window position is saved after a drag ends and restored on launch. Off-screen positions are rejected.
+
+### Changed
+
+- The on-screen log is capped at 400 rows per channel. History trimming is quieter.
+
+### Removed
+
+- Settings backup to the clipboard (file backup stays) and the duplicate hide-sidebar switch.
+
+## [0.4.14] - 2026-10-13
+
+### Added
+
+- Themes Dark, Light, Deuteranopia, Protanopia, Tritanopia and Eye comfort next to the animal themes.
+- Read only: hides the message boxes and channel confirms, with a Settings switch and a header control.
+
+## [0.4.13] - 2026-10-13
+
+### Changed
+
+- The Settings window has its own limited permissions and sends changes to the main window at once.
+
+### Removed
+
+- The close button inside the Settings panel (the title-bar close and Esc stay).
+
+## [0.4.12] - 2026-10-13
+
+### Changed
+
+- Four chats fill a 2 by 2 grid. The channel confirm is one button, "chat in #channel".
+
+## [0.4.11] - 2026-10-13
+
+### Changed
+
+- Grid panes also block sending after a channel switch until you confirm the channel.
+
+## [0.4.10] - 2026-10-13
+
+### Fixed
+
+- Grid panes no longer collapse the chat log to zero height.
+- Settings always opens a fresh window, so a white page recovers.
+- Quit closes Settings and enables the main window, so exit cannot get stuck.
+
+## [0.4.9] - 2026-10-12
+
+### Added
+
+- A search box in Settings.
+- Tray "Check for updates…" runs a quiet check and shows the result as a toast.
+
+## [0.4.8] - 2026-10-12
+
+### Changed
+
+- Settings opens in its own window. The main window is disabled until it closes. Esc closes Settings.
+
+## [0.4.7] - 2026-10-12
+
+### Fixed
+
+- Tab-completion pictures and the suggestion list: the list is no longer clipped in the grid, a single match shows, and emote thumbnails load. The emote menu gets the same picture fix.
+
+## [0.4.6] - 2026-10-12
+
+### Changed
+
+- Grid panes stay near square, with less padding at the edges.
+
+## [0.4.5] - 2026-10-12
+
+### Added
+
+- Tray "Check for updates" uses the portable update flow.
+- The main window's position, size and maximized state are saved in `ZooChattr-data/window.json`.
+- After a channel switch, the message box blocks sending until you confirm the channel.
+
+## [0.4.4] - 2026-10-12
+
+### Added
+
+- Arrow keys move through the Tab-completion list; Esc closes it.
+
+## [0.4.3] - 2026-10-12
+
+### Added
+
+- Follow many channels and pin up to 4 on the grid. Other channels stay in the sidebar.
+
+### Changed
+
+- The Settings header and close button stay in place while the panel scrolls.
+
+## [0.4.2] - 2026-10-12
+
+### Added
+
+- About 48 hours of chat per channel is saved under `ZooChattr-data/chat` and reloaded on launch.
+- The app checks GitHub for newer portable builds at start and every few hours. Both are Settings switches.
+
+## [0.4.1] - 2026-10-12
+
+### Changed
+
+- New chat-bubble app and tray icon. The tray menu has Settings. Tab completion uses the vertical emote list.
+
+## [0.4.0] - 2026-10-12
+
+### Added
+
+- In-app updates from GitHub portable builds (the data folder is kept).
+- Start with Windows, quit confirmation from the tray, and a control to hide the window chrome in the grid.
+
+### Fixed
+
+- The emote picker no longer freezes on big 7TV packs.
+
+## [0.3.3] - 2026-10-12
+
+### Fixed
+
+- Pasted twitch.tv links to videos, the directory and other non-channel pages are refused as channel names; `/moderator/<login>` links are accepted.
+- Channel emote downloads retry on the next join after a failure.
+
+## [0.3.2] - 2026-10-11
+
+### Added
+
+- Settings → Per channel: turn emote sources, overlays, Tab completion, the emote menu, preview, highlight words or deleted-message display off for one channel.
+- Settings → Problems: the last 20 emote download failures, with Clear.
+
+## [0.3.1] - 2026-10-11
+
+### Fixed
+
+- Fixes after review of the Geckmotes port: Tab completion, backup restore (only ZooChattr settings files are accepted), forced emote reloads, damaged cached lists, cache cleanup, the block list for Twitch emotes, highlight words, the text-size box, focus after the emote menu.
+
+### Changed
+
+- The favourites limit is 2000.
+
+## [0.3.0] - 2026-10-11
+
+### Added
+
+- Features ported from the Geckmotes browser extension: per-source emote switches, emote size and animation options, overlay switch, block list, cached emote lists, favourites, emote menu, Tab completion, any text size, highlight words, deleted-message display, and settings backup, restore and reset.
+
+## [0.2.0] - 2026-10-11
+
+### Added
+
+- A grid where each channel has its own box, log and message box (replaces the merged feed).
+- Animal themes: Crested gecko, Penguin, Sea turtle and Elephant.
+- Close to tray (optional). The tray tooltip counts mentions. A second launch brings the running copy to the front.
+
+### Changed
+
+- Settings and error messages shorten the home folder path.
+
+### Fixed
+
+- On Linux, single-instance is turned on only where its D-Bus transport works.
+
+## [0.1.0] - 2026-10-11
+
+### Added
+
+- First version, first named ChatDeck and renamed to ZooChattr: Tauri 2, React and Tailwind app with a Twitch IRC chat engine, emotes, read markers, mention taskbar flash, portable packaging, a mock Twitch server, unit tests, and end-to-end and soak scripts.
+- Release workflow: a `v*` tag builds `ZooChattr.exe` on Windows, runs the tests and attaches the portable zip to a GitHub release. The app version comes from `package.json`.
+
+[Unreleased]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.7.6...HEAD
 [0.7.6]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.7.3...v0.7.4
@@ -125,3 +362,32 @@ All notable changes to ZooChattr are listed here, newest first. The format follo
 [0.7.0]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.22...v0.5.0
+[0.4.22]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.21...v0.4.22
+[0.4.21]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.20...v0.4.21
+[0.4.20]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.19...v0.4.20
+[0.4.19]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.18...v0.4.19
+[0.4.18]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.17...v0.4.18
+[0.4.17]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.16...v0.4.17
+[0.4.16]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.15...v0.4.16
+[0.4.15]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.14...v0.4.15
+[0.4.14]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.13...v0.4.14
+[0.4.13]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.12...v0.4.13
+[0.4.12]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.11...v0.4.12
+[0.4.11]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.10...v0.4.11
+[0.4.10]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.9...v0.4.10
+[0.4.9]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.8...v0.4.9
+[0.4.8]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.7...v0.4.8
+[0.4.7]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.6...v0.4.7
+[0.4.6]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.5...v0.4.6
+[0.4.5]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.3.3...v0.4.0
+[0.3.3]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/gecko-of-shadow/ZooChattr/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/gecko-of-shadow/ZooChattr/tree/v0.1.0
