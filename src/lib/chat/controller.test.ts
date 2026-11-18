@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
-import { chat, HISTORY_FLUSH_MS, ALL_CHANNELS } from "@/lib/chat/controller";
+import { chat, HISTORY_FLUSH_MS, ALL_CHANNELS, EMOTE_RETRY_GAP_MS } from "@/lib/chat/controller";
 import { config } from "@/lib/config";
 import { emoteRegistry } from "@/lib/emotes/registry";
 import * as platform from "@/lib/platform";
@@ -800,6 +800,9 @@ describe("chat controller view and history", () => {
     };
     const loadChannel = vi.spyOn(emoteRegistry, "loadChannel").mockResolvedValue();
     const loadGlobal = vi.spyOn(emoteRegistry, "loadGlobal").mockResolvedValue();
+    // Earlier tests leave the shared registry with failed downloads; this test is about lists that loaded fine.
+    const channelFailed = vi.spyOn(emoteRegistry, "channelNeedsRetry").mockReturnValue(false);
+    const globalFailed = vi.spyOn(emoteRegistry, "globalNeedsRetry").mockReturnValue(false);
     const realRead = internal.read;
     internal.read = { status: "connected" };
     try {
@@ -832,6 +835,71 @@ describe("chat controller view and history", () => {
       internal.globalEmotesLoadedAt = Date.now();
       loadChannel.mockRestore();
       loadGlobal.mockRestore();
+      channelFailed.mockRestore();
+      globalFailed.mockRestore();
+    }
+  });
+
+  it("asks again after two minutes when an emote list failed to download", () => {
+    seed({ mode: "focused", focused: "geckotown", gridChannels: ["geckotown"], channels: ["geckotown"] });
+    useChat.setState((s) => ({ channels: { geckotown: { ...s.channels.geckotown, roomId: "1" } } }));
+    const internal = chat as unknown as {
+      read: unknown;
+      emoteLoadedAt: Map<string, number>;
+      globalEmotesLoadedAt: number;
+      tick: () => void;
+    };
+    const loadChannel = vi.spyOn(emoteRegistry, "loadChannel").mockResolvedValue();
+    const loadGlobal = vi.spyOn(emoteRegistry, "loadGlobal").mockResolvedValue();
+    const retryChannel = vi.spyOn(emoteRegistry, "retryChannel").mockResolvedValue();
+    const retryGlobal = vi.spyOn(emoteRegistry, "retryGlobal").mockResolvedValue();
+    const channelFailed = vi.spyOn(emoteRegistry, "channelNeedsRetry").mockReturnValue(true);
+    const globalFailed = vi.spyOn(emoteRegistry, "globalNeedsRetry").mockReturnValue(false);
+    const realRead = internal.read;
+    internal.read = { status: "connected" };
+    try {
+      const start = Date.now();
+      internal.globalEmotesLoadedAt = start;
+      internal.emoteLoadedAt.set("geckotown", start);
+      vi.setSystemTime(start + EMOTE_RETRY_GAP_MS - 1_000);
+      internal.tick();
+      expect(loadChannel).not.toHaveBeenCalled();
+
+      vi.setSystemTime(start + EMOTE_RETRY_GAP_MS + 1_000);
+      internal.tick();
+      expect(retryChannel).toHaveBeenCalledTimes(1);
+      expect(retryChannel).toHaveBeenLastCalledWith("geckotown");
+      // Still failing: not again on the next tick, and the next wait is twice as long.
+      internal.tick();
+      vi.setSystemTime(start + 3 * EMOTE_RETRY_GAP_MS);
+      internal.tick();
+      expect(retryChannel).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(start + 3 * EMOTE_RETRY_GAP_MS + 2_000);
+      internal.tick();
+      expect(retryChannel).toHaveBeenCalledTimes(2);
+
+      // A failed global list (for example no network yet at startup) is retried the same way, not 12 hours later.
+      channelFailed.mockReturnValue(false);
+      globalFailed.mockReturnValue(true);
+      internal.tick();
+      expect(retryGlobal).toHaveBeenCalledTimes(1);
+      internal.tick();
+      expect(retryGlobal).toHaveBeenCalledTimes(1);
+
+      // Only the failed source is asked again: no full reload of every list.
+      expect(loadChannel).not.toHaveBeenCalled();
+      expect(loadGlobal).not.toHaveBeenCalled();
+    } finally {
+      retryChannel.mockRestore();
+      retryGlobal.mockRestore();
+      (chat as unknown as { emoteRetries: Map<string, unknown> }).emoteRetries.clear();
+      internal.read = realRead;
+      internal.emoteLoadedAt.clear();
+      internal.globalEmotesLoadedAt = Date.now();
+      loadChannel.mockRestore();
+      loadGlobal.mockRestore();
+      channelFailed.mockRestore();
+      globalFailed.mockRestore();
     }
   });
 

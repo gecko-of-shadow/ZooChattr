@@ -70,6 +70,9 @@ export const ALL_CHANNELS = "*";
 
 const JOIN_TIMEOUT_MS = 45_000;
 const EMOTE_RELOAD_GAP_MS = 5 * 60_000;
+/** How soon a failed emote-list download is tried again while the app stays open. */
+export const EMOTE_RETRY_GAP_MS = 2 * 60_000;
+const EMOTE_RETRY_MAX_GAP_MS = 30 * 60_000;
 const REFRESH_MARGIN_MS = 5 * 60_000;
 /** How often a busy channel appends the lines still only in memory. */
 export const HISTORY_FLUSH_MS = 30_000;
@@ -150,6 +153,8 @@ class ChatController {
   private channelBadges = new Map<string, BadgeMap>();
   private emoteLoadedAt = new Map<string, number>();
   private globalEmotesLoadedAt = Date.now();
+  /** Retries of failed emote-list downloads so far, per channel (ALL_CHANNELS = the global lists). */
+  private emoteRetries = new Map<string, { tries: number; at: number }>();
   private refreshing: Promise<Session | null> | null = null;
   private recoveringAuth = false;
   private everConnected = false;
@@ -1135,6 +1140,7 @@ class ChatController {
     this.read.part(name);
     emoteRegistry.removeChannel(name);
     this.emoteLoadedAt.delete(name);
+    this.emoteRetries.delete(name);
     this.channelBadges.delete(name);
     this.pendingSends = this.pendingSends.filter((p) => {
       if (p.channel === name) clearTimeout(p.timer);
@@ -1536,13 +1542,40 @@ class ChatController {
       void emoteRegistry.loadGlobal(true);
       return;
     }
-    for (const view of Object.values(get().channels)) {
-      const loadedAt = this.emoteLoadedAt.get(view.login);
-      if (view.status !== "joined" || !view.roomId || loadedAt === undefined || now - loadedAt < FRESH_FOR.channel) continue;
-      this.emoteLoadedAt.set(view.login, now);
-      void emoteRegistry.loadChannel(view.login, view.roomId, true);
+    if (this.emoteRetryDue(ALL_CHANNELS, emoteRegistry.globalNeedsRetry(), this.globalEmotesLoadedAt, now)) {
+      void emoteRegistry.retryGlobal();
       return;
     }
+    for (const view of Object.values(get().channels)) {
+      const loadedAt = this.emoteLoadedAt.get(view.login);
+      if (view.status !== "joined" || !view.roomId || loadedAt === undefined) continue;
+      if (now - loadedAt >= FRESH_FOR.channel) {
+        this.emoteLoadedAt.set(view.login, now);
+        void emoteRegistry.loadChannel(view.login, view.roomId, true);
+        return;
+      }
+      if (this.emoteRetryDue(view.login, emoteRegistry.channelNeedsRetry(view.login), loadedAt, now)) {
+        void emoteRegistry.retryChannel(view.login);
+        return;
+      }
+    }
+  }
+
+  /**
+   * A list that failed to download (server down, timed out) is asked for again after 2 minutes, not an hour
+   * (or 12 hours for the global lists) later. Only the failed source is asked, and each new failure doubles
+   * the wait up to 30 minutes, so a server that stays down isn't hammered.
+   */
+  private emoteRetryDue(key: string, failed: boolean, loadedAt: number, now: number): boolean {
+    if (!failed) {
+      this.emoteRetries.delete(key);
+      return false;
+    }
+    const last = this.emoteRetries.get(key) ?? { tries: 0, at: loadedAt };
+    const gap = Math.min(EMOTE_RETRY_GAP_MS * 2 ** last.tries, EMOTE_RETRY_MAX_GAP_MS);
+    if (now - Math.max(last.at, loadedAt) < gap) return false;
+    this.emoteRetries.set(key, { tries: last.tries + 1, at: now });
+    return true;
   }
 
   // ---------------------------------------------------------------- chat history & updates

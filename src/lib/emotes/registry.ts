@@ -194,6 +194,54 @@ export class EmoteRegistry {
     );
   }
 
+  /**
+   * Asks again for the global lists whose download failed, and only those: the sources that loaded fine
+   * are not downloaded again.
+   */
+  async retryGlobal(): Promise<void> {
+    const loadId = this.globalLoadId;
+    await Promise.all(
+      THIRD_PARTY_PROVIDERS.filter((p) => this.globalStatus[p].state === "error").map(async (provider) => {
+        try {
+          const emotes = await globalFetchers[provider]();
+          if (this.globalLoadId !== loadId) return; // a full reload took over
+          this.global[provider] = emotes;
+          this.globalStatus[provider] = emotes.length ? { state: "ok", count: emotes.length } : { state: "none" };
+          if (this.prefs.remember) this.cache.put(`${provider}:global`, "global", emotes);
+          this.emit(null);
+        } catch (err) {
+          if (this.globalLoadId === loadId) problemLog.record(provider, "global", describeError(err));
+        }
+      }),
+    );
+  }
+
+  /** Asks again for this channel's lists whose download failed, and only those. */
+  async retryChannel(channel: string): Promise<void> {
+    const entry = this.channels.get(channel);
+    if (!entry) return;
+    await Promise.all(
+      THIRD_PARTY_PROVIDERS.filter((p) => entry.status[p].state === "error").map(async (provider) => {
+        const key = `${provider}:channel:${entry.roomId}`;
+        let emotes: Emote[] = [];
+        try {
+          emotes = await channelFetchers[provider](entry.roomId);
+          if (this.prefs.remember) this.cache.put(key, "channel", emotes);
+        } catch (err) {
+          if (!(err instanceof NotFoundError)) {
+            problemLog.record(provider, "channel", describeError(err), channel);
+            return; // still failing: the status stays "error"
+          }
+          if (this.prefs.remember) this.cache.put(key, "channel", []);
+        }
+        if (this.channels.get(channel) !== entry) return; // a newer load replaced this one
+        entry.emotes[provider] = emotes;
+        entry.status[provider] = emotes.length ? { state: "ok", count: emotes.length } : { state: "none" };
+        this.emit(channel);
+      }),
+    );
+  }
+
   removeChannel(channel: string): void {
     this.channels.delete(channel);
     this.lookups.delete(channel);
@@ -271,6 +319,11 @@ export class EmoteRegistry {
     // No entry yet is not a failed download. Forcing the load would skip the saved emote lists.
     if (!entry) return false;
     return THIRD_PARTY_PROVIDERS.some((p) => entry.status[p].state === "error");
+  }
+
+  /** True when a global list failed to download and nothing is showing for it (worth asking again soon). */
+  globalNeedsRetry(): boolean {
+    return THIRD_PARTY_PROVIDERS.some((p) => this.globalStatus[p].state === "error");
   }
 
   channelEmotes(channel: string): Emote[] {

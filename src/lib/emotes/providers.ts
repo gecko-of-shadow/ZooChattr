@@ -3,7 +3,8 @@ import type { Emote, EmoteScope, ThirdPartyProvider } from "./types";
 
 export class NotFoundError extends Error {}
 
-const TIMEOUT_MS = 12_000;
+/** A struggling emote server can take about 20 s to answer; giving up sooner loses a list it would have sent. */
+const TIMEOUT_MS = 25_000;
 
 async function getJson<T>(url: string): Promise<T> {
   const controller = new AbortController();
