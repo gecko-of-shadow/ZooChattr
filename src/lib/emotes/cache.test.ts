@@ -76,6 +76,55 @@ describe("EmoteCache", () => {
     expect(store.keys()).toEqual([]);
   });
 
+  it("drops the least recently used lists when the storage is full", () => {
+    const store = memoryStorage();
+    // A storage with room for about two lists (the index is small and always fits).
+    const LIMIT = 700;
+    const used = (skip: string) =>
+      store.keys().reduce((n, k) => (k === skip || k.endsWith("index") ? n : n + (store.getItem(k)?.length ?? 0)), 0);
+    const small = {
+      ...store,
+      setItem: (k: string, v: string) => {
+        if (!k.endsWith("index") && used(k) + v.length > LIMIT) throw new Error("QuotaExceededError");
+        store.setItem(k, v);
+      },
+    };
+    let now = 0;
+    const cache = new EmoteCache(small, () => ++now);
+    const list = (tag: string) => Array.from({ length: 3 }, (_, i) => emote(`${tag}${i}`));
+    cache.put("7tv:channel:1", "channel", list("a"));
+    cache.put("7tv:channel:2", "channel", list("b"));
+    expect(cache.size).toBe(2);
+    cache.get("7tv:channel:1"); // channel 1 was used last, so channel 2 is the one to go
+    cache.put("7tv:channel:3", "channel", list("c"));
+    expect(cache.get("7tv:channel:3")?.emotes).toHaveLength(3);
+    expect(cache.get("7tv:channel:1")).not.toBeNull();
+    expect(cache.get("7tv:channel:2")).toBeNull();
+    expect(cache.size).toBe(2);
+
+  });
+
+  it("stops dropping lists when the new one still does not fit", () => {
+    const store = memoryStorage();
+    // Something else has filled the storage: this one key can never be written.
+    const full = {
+      ...store,
+      setItem: (k: string, v: string) => {
+        if (k.endsWith("channel:new")) throw new Error("QuotaExceededError");
+        store.setItem(k, v);
+      },
+    };
+    let now = 0;
+    const cache = new EmoteCache(full, () => ++now);
+    const list = (tag: string) => Array.from({ length: 3 }, (_, i) => emote(`${tag}${i}`));
+    for (const id of ["1", "2", "3"]) cache.put(`7tv:channel:${id}`, "channel", list(id));
+    cache.put("7tv:channel:new", "channel", [emote("small")]);
+    expect(cache.get("7tv:channel:new")).toBeNull();
+    // One older list made more room than the new list needs; the rest are kept.
+    expect(cache.size).toBe(2);
+    expect(cache.get("7tv:channel:3")).not.toBeNull();
+  });
+
   it("does nothing without storage", () => {
     const cache = new EmoteCache(null);
     cache.put("x", "global", []);

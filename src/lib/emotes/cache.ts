@@ -1,7 +1,8 @@
 // Remember emotes: every downloaded emote list is kept in localStorage (which lives in the ZooChattr-data folder),
 // so pictures show the moment a channel opens instead of after three downloads. Stale-while-revalidate: an old
 // list is used right away and refreshed in the background. Bounded: at most MAX_SETS lists, least recently used
-// dropped first (roughly 60-120 KB for a 1,000-emote channel).
+// dropped first. A 1,000-emote 7TV channel is about 500 KB, so a handful of big channels can fill the storage
+// long before MAX_SETS: when a write does not fit, the least recently used lists are dropped until it does.
 import type { Emote, EmoteScope } from "./types";
 
 const HOUR = 3_600_000;
@@ -103,10 +104,20 @@ export class EmoteCache {
   put(key: string, scope: EmoteScope, emotes: Emote[]): void {
     const store = this.store;
     if (!store) return;
-    try {
-      store.setItem(PREFIX + key, JSON.stringify({ at: this.now(), scope, emotes } satisfies Entry));
-    } catch {
-      return; // Quota or private mode: live without the cache.
+    const value = JSON.stringify({ at: this.now(), scope, emotes } satisfies Entry);
+    // Storage full: drop the least recently used lists, one at a time, until this one fits.
+    let freed = 0;
+    for (;;) {
+      try {
+        store.setItem(PREFIX + key, value);
+        break;
+      } catch {
+        // Freed more than this list needs and it still does not fit: it never will, so keep the other lists.
+        if (freed > value.length) return;
+        const dropped = this.dropOldest(store, key);
+        if (dropped === null) return; // Nothing left to drop (or private mode): live without the cache.
+        freed += dropped;
+      }
     }
     try {
       this.touch(store, key, true);
@@ -140,6 +151,28 @@ export class EmoteCache {
   /** Number of lists kept. */
   get size(): number {
     return this.store ? Object.keys(readIndex(this.store)).length : 0;
+  }
+
+  /**
+   * Removes the least recently used list other than `keep` and returns how many characters that freed.
+   * Null when there is none (or storage refuses).
+   */
+  private dropOldest(store: Storage, keep: string): number | null {
+    try {
+      const index = readIndex(store);
+      const oldest = Object.keys(index)
+        .filter((k) => k !== keep)
+        .sort((a, b) => index[a] - index[b])[0];
+      if (oldest === undefined) return null;
+      const size = store.getItem(PREFIX + oldest)?.length ?? 0;
+      store.removeItem(PREFIX + oldest);
+      delete index[oldest];
+      // Removing an entry frees room, so this smaller index fits where the old one did.
+      store.setItem(INDEX_KEY, JSON.stringify(index));
+      return size;
+    } catch {
+      return null;
+    }
   }
 
   /** Marks `key` as just used; drops the oldest lists when there are too many. */
