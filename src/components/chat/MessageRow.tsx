@@ -14,6 +14,7 @@ import type { ChatMessage } from "@/lib/twitch/types";
 import { cn } from "@/lib/utils";
 import type { ConcreteSkin } from "@/lib/themes";
 import type { EmoteAnimation } from "@/store/settings";
+import { useImageRetry } from "./useImageRetry";
 
 export interface RowPrefs {
   /** The theme showing now; chatter name colours are adjusted to read on it. */
@@ -43,14 +44,16 @@ function srcSet(urls: { url1x: string; url2x?: string; url4x?: string }): string
 }
 
 function EmoteImage({ emote, animation, overlay = false }: { emote: Emote; animation: EmoteAnimation; overlay?: boolean }) {
-  const [failed, setFailed] = useState(false);
   const [hovered, setHovered] = useState(false);
-  if (failed) return overlay ? null : <span className="[grid-area:1/1]">{emote.name}</span>;
   // "hover": the still frame until the pointer is on it (the row's mouse events reach us through bubbling).
   const still = animation === "never" || (animation === "hover" && !hovered);
   const urls = emoteUrls(emote, still);
+  // A failed download shows the name, and is tried again a few times before the name stays.
+  const { failed, attempt, onError } = useImageRetry(urls.url1x);
+  if (failed) return overlay ? null : <span className="[grid-area:1/1]">{emote.name}</span>;
   return (
     <img
+      key={attempt}
       src={urls.url1x}
       srcSet={srcSet(urls)}
       alt={emote.name}
@@ -64,7 +67,7 @@ function EmoteImage({ emote, animation, overlay = false }: { emote: Emote; anima
       data-emote-src={emoteBigUrl(emote, animation === "never")}
       onMouseEnter={animation === "hover" && emote.animated ? () => setHovered(true) : undefined}
       onMouseLeave={animation === "hover" && emote.animated ? () => setHovered(false) : undefined}
-      onError={() => setFailed(true)}
+      onError={onError}
     />
   );
 }

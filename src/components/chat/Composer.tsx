@@ -28,6 +28,7 @@ import { ackSendChannel, clearReplyTarget, useUi } from "@/store/ui";
 import { EmotePicker, rememberEmoteUse } from "./EmotePicker";
 import { SpellMenu, SpellMirror } from "./SpellOverlay";
 import { useEmoteIndex } from "./useEmoteIndex";
+import { useImageRetry } from "./useImageRetry";
 
 function srcSet(urls: { url1x: string; url2x?: string; url4x?: string }): string | undefined {
   const parts = [`${urls.url1x} 1x`];
@@ -37,13 +38,14 @@ function srcSet(urls: { url1x: string; url2x?: string; url4x?: string }): string
 }
 
 function CompletionEmoteThumb({ emote, still }: { emote: Emote; still: boolean }) {
-  const [failed, setFailed] = useState(false);
   const urls = emoteUrls(emote, still);
+  const { failed, attempt, onError } = useImageRetry(urls.url1x);
   if (failed) {
     return <span className="text-[10px] font-medium text-muted-foreground">?</span>;
   }
   return (
     <img
+      key={attempt}
       src={urls.url1x}
       srcSet={srcSet(urls)}
       alt=""
@@ -51,7 +53,7 @@ function CompletionEmoteThumb({ emote, still }: { emote: Emote; still: boolean }
       decoding="async"
       draggable={false}
       className="max-h-7 max-w-9 object-contain"
-      onError={() => setFailed(true)}
+      onError={onError}
     />
   );
 }

@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useChat } from "@/store/chat";
 import { MAX_RECENT_EMOTES, type PickerTab } from "@/store/settings";
+import { useImageRetry } from "./useImageRetry";
 
 /** The panel's tabs (Bran's choice: favourites first, then the approved Recent / Channel / Global / BTTV / 7TV). */
 const TABS: { id: Exclude<PickerTab, "all">; label: string; title: string; name?: string }[] = [
@@ -91,8 +92,8 @@ const EmoteTile = memo(function EmoteTile({
   onPick: (emote: Emote) => void;
   onShow: (emote: Emote | null) => void;
 }) {
-  const [failed, setFailed] = useState(false);
   const urls = emoteUrls(emote, still);
+  const { failed, attempt, onError } = useImageRetry(urls.url1x);
   return (
     <button
       type="button"
@@ -113,13 +114,14 @@ const EmoteTile = memo(function EmoteTile({
         <span className="truncate px-0.5 text-[9px] text-muted-foreground">{emote.name}</span>
       ) : (
         <img
+          key={attempt}
           src={urls.url1x}
           srcSet={urls.url2x ? `${urls.url1x} 1x, ${urls.url2x} 2x` : undefined}
           alt=""
           loading="lazy"
           decoding="async"
           draggable={false}
-          onError={() => setFailed(true)}
+          onError={onError}
           className="max-h-7 max-w-8 object-contain"
         />
       )}
